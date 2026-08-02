@@ -12,6 +12,11 @@ cd "$(dirname "$0")"
 
 echo "[1/4] Checking for updates..."
 if [ -d .git ]; then
+  # Termux flags repos on shared storage (e.g. /storage/emulated/0/...) as
+  # untrusted since they're not owned by the Termux user; whitelist this
+  # checkout so `git pull` doesn't refuse to run.
+  git config --global --add safe.directory "$(pwd)" >/dev/null 2>&1 || true
+
   BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo main)"
   if git pull --ff-only origin "$BRANCH" >/dev/null 2>&1; then
     echo "  up to date with origin/$BRANCH"
