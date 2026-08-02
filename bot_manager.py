@@ -9,6 +9,8 @@ import threading
 
 import discord
 
+import bot_commands
+
 
 class BotManager:
     def __init__(self):
@@ -47,7 +49,9 @@ class BotManager:
 
         intents = discord.Intents.default()
         intents.guilds = True
-        intents.message_content = False
+        # Needed to read the text of !commands. Must also be turned on for
+        # this bot under "Message Content Intent" in the Developer Portal.
+        intents.message_content = True
 
         self.client = discord.Client(intents=intents)
 
@@ -56,6 +60,10 @@ class BotManager:
             self.status = "online"
             self.user_tag = str(self.client.user)
             print(f"[bot] Logged in as {self.client.user}")
+
+        @self.client.event
+        async def on_message(message):
+            await bot_commands.handle_message(message, self.client)
 
         try:
             self.loop.run_until_complete(self.client.start(token))
@@ -135,18 +143,33 @@ class BotManager:
             return None
         return self._profile_from_user(self.client.user)
 
-    def refresh_bot_profile(self):
-        """Forces a fresh HTTP fetch from Discord instead of the cached
-        gateway user — fixes a bot name/avatar that looks 'stuck' after
-        being changed in the Developer Portal."""
-        async def _refresh():
-            fresh = await self.client.fetch_user(self.client.user.id)
-            return self._profile_from_user(fresh)
+    def update_username(self, new_name: str) -> dict:
+        async def _update():
+            try:
+                await self.client.user.edit(username=new_name)
+                return {"ok": True, "profile": self._profile_from_user(self.client.user)}
+            except discord.HTTPException as exc:
+                return {"ok": False, "error": f"Discord rejected that name: {exc.text}"}
 
-        profile = self._run_coro(_refresh(), default=None)
-        if profile:
-            self.user_tag = profile["display_name"]
-        return profile
+        result = self._run_coro(_update(), default=None)
+        if result is None:
+            return {"ok": False, "error": "Bot isn't connected."}
+        if result["ok"]:
+            self.user_tag = result["profile"]["display_name"]
+        return result
+
+    def update_avatar(self, image_bytes: bytes) -> dict:
+        async def _update():
+            try:
+                await self.client.user.edit(avatar=image_bytes)
+                return {"ok": True, "profile": self._profile_from_user(self.client.user)}
+            except discord.HTTPException as exc:
+                return {"ok": False, "error": f"Discord rejected that image: {exc.text}"}
+
+        result = self._run_coro(_update(), default=None)
+        if result is None:
+            return {"ok": False, "error": "Bot isn't connected."}
+        return result
 
 
 def _parse_color(value) -> "discord.Color":

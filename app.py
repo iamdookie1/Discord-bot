@@ -3,6 +3,7 @@ import os
 
 from flask import Flask, jsonify, render_template, request
 
+import bot_commands
 from bot_manager import bot_manager
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -150,14 +151,85 @@ def bot_profile():
     return jsonify(bot_manager.get_bot_profile() or {})
 
 
-@app.route("/api/bot/refresh", methods=["POST"])
-def bot_refresh():
+@app.route("/api/bot/name", methods=["POST"])
+def bot_update_name():
+    data = request.get_json(force=True, silent=True) or {}
+    name = data.get("name", "").strip()
+
     if bot_manager.status != "online":
-        return jsonify({"ok": False, "error": "Bot isn't connected — can't check Discord."}), 400
-    profile = bot_manager.refresh_bot_profile()
-    if not profile:
-        return jsonify({"ok": False, "error": "Couldn't reach Discord. Try again in a moment."}), 502
-    return jsonify({"ok": True, "profile": profile})
+        return jsonify({"ok": False, "error": "Bot isn't connected yet."}), 400
+    if not (2 <= len(name) <= 32):
+        return jsonify({"ok": False, "error": "Name must be 2-32 characters."}), 400
+
+    result = bot_manager.update_username(name)
+    return jsonify(result), (200 if result.get("ok") else 400)
+
+
+@app.route("/api/bot/avatar", methods=["POST"])
+def bot_update_avatar():
+    if bot_manager.status != "online":
+        return jsonify({"ok": False, "error": "Bot isn't connected yet."}), 400
+
+    file = request.files.get("avatar")
+    if not file or not file.filename:
+        return jsonify({"ok": False, "error": "Choose an image first."}), 400
+
+    image_bytes = file.read()
+    if not image_bytes:
+        return jsonify({"ok": False, "error": "That file looks empty."}), 400
+    if len(image_bytes) > 8 * 1024 * 1024:
+        return jsonify({"ok": False, "error": "Image too large (max 8MB)."}), 400
+
+    result = bot_manager.update_avatar(image_bytes)
+    return jsonify(result), (200 if result.get("ok") else 400)
+
+
+# ---------------- commands ----------------
+
+@app.route("/api/commands/builtin")
+def commands_builtin():
+    return jsonify([
+        {"name": name, "description": description}
+        for name, (description, _handler) in bot_commands.BUILTIN_COMMANDS.items()
+    ])
+
+
+@app.route("/api/commands/custom", methods=["GET"])
+def commands_custom_list():
+    data = bot_commands.load_custom_commands()
+    return jsonify([
+        {"name": name, "description": info.get("description", ""), "code": info.get("code", "")}
+        for name, info in data.items()
+    ])
+
+
+@app.route("/api/commands/custom", methods=["POST"])
+def commands_custom_create():
+    data = request.get_json(force=True, silent=True) or {}
+    name = data.get("name", "").strip().lower()
+    code = data.get("code", "")
+    description = data.get("description", "").strip()
+
+    if not bot_commands.COMMAND_NAME_RE.match(name):
+        return jsonify({"ok": False, "error": "Name must be 1-32 characters: lowercase letters, numbers, - or _."}), 400
+    if name in bot_commands.BUILTIN_COMMANDS:
+        return jsonify({"ok": False, "error": f"!{name} is a built-in command — pick a different name."}), 400
+    if not code.strip():
+        return jsonify({"ok": False, "error": "Code can't be empty."}), 400
+
+    try:
+        bot_commands.validate_custom_code(code)
+    except SyntaxError as exc:
+        return jsonify({"ok": False, "error": f"Syntax error: {exc}"}), 400
+
+    bot_commands.set_custom_command(name, code, description)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/commands/custom/<name>", methods=["DELETE"])
+def commands_custom_delete(name):
+    ok = bot_commands.delete_custom_command(name.strip().lower())
+    return jsonify({"ok": ok})
 
 
 # ---------------- auto-reconnect on boot if a token is already saved ----------------
