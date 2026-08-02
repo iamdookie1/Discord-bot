@@ -108,5 +108,93 @@ class BotManager:
         ok = self._run_coro(_send(), default=False)
         return ok
 
+    def send_embed(self, guild_id: str, channel_id: str, embed_data: dict):
+        async def _send():
+            channel = self.client.get_channel(int(channel_id))
+            if channel is None:
+                channel = await self.client.fetch_channel(int(channel_id))
+            await channel.send(embed=_build_embed(embed_data))
+            return True
+
+        return self._run_coro(_send(), default=False)
+
+    # ---------- bot profile (name/avatar, straight from Discord) ----------
+
+    def _profile_from_user(self, user) -> dict:
+        return {
+            "id": str(user.id),
+            "name": user.name,
+            "discriminator": user.discriminator,
+            "display_name": str(user),
+            "avatar_url": str(user.display_avatar.url) if user.display_avatar else None,
+        }
+
+    def get_bot_profile(self):
+        """Cheap, cached profile from the current gateway session."""
+        if not (self.client and self.status == "online" and self.client.user):
+            return None
+        return self._profile_from_user(self.client.user)
+
+    def refresh_bot_profile(self):
+        """Forces a fresh HTTP fetch from Discord instead of the cached
+        gateway user — fixes a bot name/avatar that looks 'stuck' after
+        being changed in the Developer Portal."""
+        async def _refresh():
+            fresh = await self.client.fetch_user(self.client.user.id)
+            return self._profile_from_user(fresh)
+
+        profile = self._run_coro(_refresh(), default=None)
+        if profile:
+            self.user_tag = profile["display_name"]
+        return profile
+
+
+def _parse_color(value) -> "discord.Color":
+    if not value:
+        return discord.Color.default()
+    try:
+        return discord.Color(int(str(value).strip().lstrip("#"), 16))
+    except (ValueError, TypeError):
+        return discord.Color.default()
+
+
+def _build_embed(data: dict) -> "discord.Embed":
+    embed = discord.Embed(
+        title=(data.get("title") or None),
+        description=(data.get("description") or None),
+        url=(data.get("url") or None),
+        color=_parse_color(data.get("color")),
+    )
+
+    if data.get("author_name"):
+        embed.set_author(
+            name=data["author_name"],
+            url=(data.get("author_url") or None),
+            icon_url=(data.get("author_icon_url") or None),
+        )
+
+    if data.get("footer_text"):
+        embed.set_footer(
+            text=data["footer_text"],
+            icon_url=(data.get("footer_icon_url") or None),
+        )
+
+    if data.get("thumbnail_url"):
+        embed.set_thumbnail(url=data["thumbnail_url"])
+
+    if data.get("image_url"):
+        embed.set_image(url=data["image_url"])
+
+    if data.get("timestamp"):
+        embed.timestamp = discord.utils.utcnow()
+
+    for field in (data.get("fields") or [])[:25]:
+        name = (field.get("name") or "").strip()
+        value = (field.get("value") or "").strip()
+        if name and value:
+            embed.add_field(name=name, value=value, inline=bool(field.get("inline")))
+
+    return embed
+
 
 bot_manager = BotManager()

@@ -121,6 +121,45 @@ def send():
     return jsonify({"ok": True})
 
 
+# ---------------- send embed ----------------
+
+@app.route("/api/send_embed", methods=["POST"])
+def send_embed():
+    data = request.get_json(force=True, silent=True) or {}
+    guild_id = data.get("guild_id", "")
+    channel_id = data.get("channel_id", "")
+    embed = data.get("embed") or {}
+
+    if bot_manager.status != "online":
+        return jsonify({"ok": False, "error": "Bot isn't connected yet."}), 400
+    if not (guild_id and channel_id):
+        return jsonify({"ok": False, "error": "Pick a server and a channel first."}), 400
+    if not (embed.get("title") or embed.get("description") or embed.get("fields")):
+        return jsonify({"ok": False, "error": "Add at least a title, description, or a field."}), 400
+
+    ok = bot_manager.send_embed(guild_id, channel_id, embed)
+    if not ok:
+        return jsonify({"ok": False, "error": "Couldn't send that embed. Check the bot's permissions in that channel."}), 500
+    return jsonify({"ok": True})
+
+
+# ---------------- bot profile ----------------
+
+@app.route("/api/bot/profile")
+def bot_profile():
+    return jsonify(bot_manager.get_bot_profile() or {})
+
+
+@app.route("/api/bot/refresh", methods=["POST"])
+def bot_refresh():
+    if bot_manager.status != "online":
+        return jsonify({"ok": False, "error": "Bot isn't connected — can't check Discord."}), 400
+    profile = bot_manager.refresh_bot_profile()
+    if not profile:
+        return jsonify({"ok": False, "error": "Couldn't reach Discord. Try again in a moment."}), 502
+    return jsonify({"ok": True, "profile": profile})
+
+
 # ---------------- auto-reconnect on boot if a token is already saved ----------------
 
 def _autostart():

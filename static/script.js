@@ -10,6 +10,7 @@ tabs.forEach((tab) => {
     tab.classList.add("is-active");
     document.getElementById(`tab-${tab.dataset.tab}`).classList.add("is-active");
     if (tab.dataset.tab === "text") refreshGuilds();
+    if (tab.dataset.tab === "bot") loadBotProfile();
   });
 });
 
@@ -185,6 +186,198 @@ function escapeHtml(str) {
   div.textContent = str;
   return div.innerHTML;
 }
+
+// ---------- text tab: embed ----------
+
+const embedTitle = document.getElementById("embedTitle");
+const embedUrl = document.getElementById("embedUrl");
+const embedDescription = document.getElementById("embedDescription");
+const embedColor = document.getElementById("embedColor");
+const embedColorPicker = document.getElementById("embedColorPicker");
+const embedTimestamp = document.getElementById("embedTimestamp");
+const embedAuthorName = document.getElementById("embedAuthorName");
+const embedAuthorUrl = document.getElementById("embedAuthorUrl");
+const embedAuthorIcon = document.getElementById("embedAuthorIcon");
+const embedThumbnail = document.getElementById("embedThumbnail");
+const embedImage = document.getElementById("embedImage");
+const embedFooterText = document.getElementById("embedFooterText");
+const embedFooterIcon = document.getElementById("embedFooterIcon");
+const embedFieldsList = document.getElementById("embedFieldsList");
+const addEmbedFieldBtn = document.getElementById("addEmbedFieldBtn");
+const sendEmbedBtn = document.getElementById("sendEmbedBtn");
+const clearEmbedBtn = document.getElementById("clearEmbedBtn");
+const embedMsg = document.getElementById("embedMsg");
+
+const EMBED_TEXT_FIELDS = [
+  embedTitle, embedUrl, embedDescription, embedColor,
+  embedAuthorName, embedAuthorUrl, embedAuthorIcon,
+  embedThumbnail, embedImage, embedFooterText, embedFooterIcon,
+];
+
+const MAX_EMBED_FIELDS = 25;
+
+function addEmbedFieldRow() {
+  if (embedFieldsList.children.length >= MAX_EMBED_FIELDS) return;
+
+  const row = document.createElement("div");
+  row.className = "embed-field-row";
+
+  const nameInput = document.createElement("input");
+  nameInput.type = "text";
+  nameInput.className = "field-input embed-field-name";
+  nameInput.placeholder = "Field name";
+
+  const valueInput = document.createElement("input");
+  valueInput.type = "text";
+  valueInput.className = "field-input embed-field-value";
+  valueInput.placeholder = "Field value";
+
+  const inlineLabel = document.createElement("label");
+  inlineLabel.className = "checkbox-row";
+  const inlineCheckbox = document.createElement("input");
+  inlineCheckbox.type = "checkbox";
+  inlineCheckbox.className = "embed-field-inline";
+  inlineCheckbox.checked = true;
+  const inlineSpan = document.createElement("span");
+  inlineSpan.textContent = "Inline";
+  inlineLabel.append(inlineCheckbox, inlineSpan);
+
+  const removeBtn = document.createElement("button");
+  removeBtn.type = "button";
+  removeBtn.className = "btn-ghost embed-field-remove";
+  removeBtn.title = "Remove field";
+  removeBtn.textContent = "×";
+  removeBtn.addEventListener("click", () => row.remove());
+
+  row.append(nameInput, valueInput, inlineLabel, removeBtn);
+  embedFieldsList.appendChild(row);
+}
+
+function collectEmbedFields() {
+  return Array.from(embedFieldsList.querySelectorAll(".embed-field-row"))
+    .map((row) => ({
+      name: row.querySelector(".embed-field-name").value.trim(),
+      value: row.querySelector(".embed-field-value").value.trim(),
+      inline: row.querySelector(".embed-field-inline").checked,
+    }))
+    .filter((f) => f.name && f.value);
+}
+
+addEmbedFieldBtn.addEventListener("click", () => addEmbedFieldRow());
+
+embedColorPicker.addEventListener("input", () => {
+  embedColor.value = embedColorPicker.value;
+});
+
+embedColor.addEventListener("input", () => {
+  const v = embedColor.value.trim();
+  if (/^#?[0-9a-fA-F]{6}$/.test(v)) {
+    embedColorPicker.value = v.startsWith("#") ? v : `#${v}`;
+  }
+});
+
+sendEmbedBtn.addEventListener("click", async () => {
+  const guild_id = serverSelect.value;
+  const channel_id = channelSelect.value;
+
+  if (!guild_id || !channel_id) {
+    setMsg(embedMsg, "Pick a server and a channel first.", "error");
+    return;
+  }
+
+  const embed = {
+    title: embedTitle.value.trim(),
+    description: embedDescription.value.trim(),
+    url: embedUrl.value.trim(),
+    color: embedColor.value.trim() || embedColorPicker.value,
+    timestamp: embedTimestamp.checked,
+    author_name: embedAuthorName.value.trim(),
+    author_url: embedAuthorUrl.value.trim(),
+    author_icon_url: embedAuthorIcon.value.trim(),
+    thumbnail_url: embedThumbnail.value.trim(),
+    image_url: embedImage.value.trim(),
+    footer_text: embedFooterText.value.trim(),
+    footer_icon_url: embedFooterIcon.value.trim(),
+    fields: collectEmbedFields(),
+  };
+
+  if (!(embed.title || embed.description || embed.fields.length)) {
+    setMsg(embedMsg, "Add at least a title, description, or a field.", "error");
+    return;
+  }
+
+  sendEmbedBtn.disabled = true;
+  setMsg(embedMsg, "Sending...", "");
+  const data = await api("/api/send_embed", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ guild_id, channel_id, embed }),
+  });
+  sendEmbedBtn.disabled = false;
+
+  if (data.ok) {
+    setMsg(embedMsg, "Sent.", "success");
+  } else {
+    setMsg(embedMsg, data.error || "Couldn't send that embed.", "error");
+  }
+});
+
+clearEmbedBtn.addEventListener("click", () => {
+  EMBED_TEXT_FIELDS.forEach((el) => (el.value = ""));
+  embedColorPicker.value = "#ffb454";
+  embedTimestamp.checked = false;
+  embedFieldsList.innerHTML = "";
+  addEmbedFieldRow();
+  setMsg(embedMsg, "", "");
+});
+
+addEmbedFieldRow();
+
+// ---------- bot tab ----------
+
+const botAvatar = document.getElementById("botAvatar");
+const botName = document.getElementById("botName");
+const botId = document.getElementById("botId");
+const refreshBotBtn = document.getElementById("refreshBotBtn");
+const botMsg = document.getElementById("botMsg");
+
+function renderBotProfile(profile) {
+  if (!profile || !profile.name) {
+    botName.textContent = "Not connected";
+    botId.textContent = "—";
+    botAvatar.style.backgroundImage = "";
+    botAvatar.textContent = "?";
+    return;
+  }
+  botName.textContent = profile.display_name || profile.name;
+  botId.textContent = profile.id;
+  if (profile.avatar_url) {
+    botAvatar.style.backgroundImage = `url("${profile.avatar_url}")`;
+    botAvatar.textContent = "";
+  } else {
+    botAvatar.style.backgroundImage = "";
+    botAvatar.textContent = profile.name[0].toUpperCase();
+  }
+}
+
+async function loadBotProfile() {
+  const profile = await api("/api/bot/profile");
+  renderBotProfile(profile);
+}
+
+refreshBotBtn.addEventListener("click", async () => {
+  refreshBotBtn.disabled = true;
+  setMsg(botMsg, "Asking Discord for the latest profile...", "");
+  const data = await api("/api/bot/refresh", { method: "POST" });
+  refreshBotBtn.disabled = false;
+
+  if (data.ok) {
+    renderBotProfile(data.profile);
+    setMsg(botMsg, "Up to date with Discord.", "success");
+  } else {
+    setMsg(botMsg, data.error || "Couldn't reach Discord.", "error");
+  }
+});
 
 // ---------- init ----------
 
