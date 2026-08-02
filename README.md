@@ -6,11 +6,13 @@ local web UI at `http://127.0.0.1:5000` instead of the command line.
 ## What's in here
 
 - `setup.sh` — Termux system-package check (installs anything missing), then launches the app
-- `run.py` — checks/installs the required **Python** packages (Flask, discord.py), then starts the server
-- `app.py` — the Flask app: routes for saving the token, listing servers/channels, and sending messages
+- `run.py` — checks/installs the required **Python** packages, then starts the server
+- `app.py` — the Flask app: all the `/api/...` routes the UI talks to
 - `bot_manager.py` — runs the actual discord.py client in the background
-- `templates/`, `static/` — the UI (Home tab, Text tab)
+- `bot_commands.py` — the built-in `!commands` and the custom-command sandbox
+- `templates/`, `static/` — the UI (Home, Text, Bot, Cmds, Custom tabs)
 - `config.json` — created automatically the first time you save a token (kept only on your device)
+- `custom_commands.json` — created automatically the first time you save a custom command (kept only on your device)
 
 ## First-time setup (in Termux)
 
@@ -52,7 +54,20 @@ Open `http://127.0.0.1:5000` in your phone's browser.
 **Text tab**
 - Pick a **server** from the dropdown (populated from the servers your bot is actually in)
 - Pick a **channel** in that server
-- Type a message and hit **Send message**
+- Type a message and hit **Send message**, and/or fill in the **Embed** box below it (title, description, color, author, footer, thumbnail, image, timestamp, and repeatable fields) and hit **Send embed** — the two send independently
+
+**Bot tab**
+- Type a new name and hit **Update** to rename the bot on Discord directly — this fixes a bot name that looks "stuck" after being renamed in the Developer Portal, since it forces a real update instead of relying on a cached one
+- Choose an image and hit **Update profile picture** to change the bot's avatar
+
+**Cmds tab**
+- Reference list of the built-in commands anyone can type in a channel the bot can see: `!ping`, `!cmds`/`!help`, `!uptime`, `!avatar`, `!userinfo`, `!serverinfo`, `!say`, `!coinflip`, `!roll`, `!8ball`, `!time`
+- **Requires "Message Content Intent" turned on** for your bot in the Developer Portal (**Bot** page) — without it, discord.py can't read what people type, so no `!command` will ever trigger. This is separate from the token and has to be flipped on manually per-bot.
+
+**Custom tab**
+- Create your own `!command` in Python. The code you write runs as the body of `async def run(ctx): ...`, where `ctx` gives you `ctx.send(...)` to reply, `ctx.args` (the words after the command), `ctx.content` (the raw text after it), and `ctx.message` / `ctx.author` / `ctx.channel` / `ctx.guild` as normal discord.py objects.
+- A wide set of modules — `discord`, `random`, `requests`, `datetime`, `json`, `re`, `os`, and more — are already imported, so you don't need to install anything to use them.
+- This code runs with full access on the device the bot is on — only add commands you wrote (or trust) yourself.
 
 ## Getting a bot token
 

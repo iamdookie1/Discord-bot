@@ -35,6 +35,16 @@
       <span>Bot</span>
     </button>
 
+    <button class="rail-tab" data-tab="cmds">
+      <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M2 4h20a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1Zm2.7 4.3 4 4-4 4L3.3 15l2.6-2.7-2.6-2.7 1.4-1.3ZM12 15h7v2h-7v-2Z"/></svg>
+      <span>Cmds</span>
+    </button>
+
+    <button class="rail-tab" data-tab="customcmds">
+      <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M8.6 4.6 3.2 12l5.4 7.4-1.6 1.2L1 12l6-8.6 1.6 1.2Zm6.8 0 1.6-1.2L23 12l-6 8.6-1.6-1.2L21 12l-5.6-7.4Z"/></svg>
+      <span>Custom</span>
+    </button>
+
     <div class="rail-spacer"></div>
 
     <div class="rail-footer">termux &middot; local</div>
@@ -203,29 +213,87 @@
     <section class="panel" id="tab-bot">
       <header class="panel-head">
         <h1>Bot</h1>
-        <p>Check the bot's live profile straight from Discord.</p>
+        <p>Change the bot's name and profile picture directly on Discord.</p>
       </header>
 
       <div class="card">
-        <div class="bot-profile">
-          <div class="bot-avatar" id="botAvatar">?</div>
-          <div class="bot-identity">
-            <div class="bot-name" id="botName">Not connected</div>
-            <div class="bot-id mono" id="botId">&mdash;</div>
+        <label class="field-label" for="botNameInput">New bot name</label>
+        <div class="field-row">
+          <input type="text" id="botNameInput" class="field-input" placeholder="Connect the bot first&hellip;" maxlength="32">
+          <button class="btn-primary" id="updateNameBtn">Update</button>
+        </div>
+        <p class="field-hint">2&ndash;32 characters. Discord rate-limits username changes, so this can occasionally fail &mdash; wait a bit and try again.</p>
+        <p class="form-msg" id="nameMsg"></p>
+      </div>
+
+      <div class="card">
+        <label class="field-label" for="botAvatarInput">New profile picture</label>
+        <input type="file" id="botAvatarInput" class="field-input" accept="image/png,image/jpeg,image/gif,image/webp">
+        <div class="btn-row">
+          <button class="btn-primary" id="updateAvatarBtn">Update profile picture</button>
+        </div>
+        <p class="form-msg" id="avatarMsg"></p>
+      </div>
+    </section>
+
+    <!-- ===== Cmds tab ===== -->
+    <section class="panel" id="tab-cmds">
+      <header class="panel-head">
+        <h1>Cmds</h1>
+        <p>Built-in commands anyone can type in a channel the bot can see.</p>
+      </header>
+
+      <div class="card card-quiet">
+        <p>Requires <span class="mono">Message Content Intent</span> turned on for this bot in the Developer Portal (Bot page) &mdash; otherwise it can't read command text.</p>
+      </div>
+
+      <div class="card">
+        <div class="cmd-list" id="builtinCmdList"></div>
+      </div>
+    </section>
+
+    <!-- ===== Custom cmds tab ===== -->
+    <section class="panel" id="tab-customcmds">
+      <header class="panel-head">
+        <h1>Custom cmds</h1>
+        <p>Write your own commands in Python &mdash; discord.py included.</p>
+      </header>
+
+      <div class="card">
+        <div class="cmd-list" id="customCmdList"></div>
+        <p class="field-hint" id="customCmdEmpty">No custom commands yet.</p>
+      </div>
+
+      <div class="card">
+        <h2 class="card-title">New custom command</h2>
+
+        <div class="field-grid">
+          <div>
+            <label class="field-label" for="customCmdName">Command name</label>
+            <input type="text" id="customCmdName" class="field-input mono" placeholder="e.g. hello">
+          </div>
+          <div>
+            <label class="field-label" for="customCmdDescription">Description</label>
+            <input type="text" id="customCmdDescription" class="field-input" placeholder="What it does">
           </div>
         </div>
 
+        <label class="field-label" for="customCmdCode">Code</label>
+        <textarea id="customCmdCode" class="field-input mono" rows="8" placeholder="await ctx.send(f'Hello {ctx.author.display_name}!')"></textarea>
         <p class="field-hint">
-          Renamed the bot in the Developer Portal and it still shows the old name
-          here or in Discord? Hit refresh &mdash; it re-fetches the profile
-          straight from Discord's API instead of the cached one from login.
+          Runs as the body of <code>async def run(ctx):</code>. Use <code>await ctx.send(...)</code>
+          to reply, <code>ctx.args</code> for the words after the command name, <code>ctx.content</code>
+          for the raw text, and <code>ctx.message</code> / <code>ctx.author</code> / <code>ctx.channel</code>
+          / <code>ctx.guild</code> for the discord.py objects. Modules like <code>discord</code>,
+          <code>random</code>, <code>requests</code>, <code>datetime</code>, <code>json</code>,
+          <code>re</code>, <code>os</code> and more are already imported for you &mdash; no installs needed.
         </p>
+        <p class="field-hint">This code runs with full access on this device &mdash; only add commands you wrote (or trust) yourself.</p>
 
         <div class="btn-row">
-          <button class="btn-primary" id="refreshBotBtn">Refresh from Discord</button>
+          <button class="btn-primary" id="createCustomCmdBtn">Create command</button>
         </div>
-
-        <p class="form-msg" id="botMsg"></p>
+        <p class="form-msg" id="customCmdMsg"></p>
       </div>
     </section>
 

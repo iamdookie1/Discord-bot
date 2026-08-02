@@ -10,7 +10,9 @@ tabs.forEach((tab) => {
     tab.classList.add("is-active");
     document.getElementById(`tab-${tab.dataset.tab}`).classList.add("is-active");
     if (tab.dataset.tab === "text") refreshGuilds();
-    if (tab.dataset.tab === "bot") loadBotProfile();
+    if (tab.dataset.tab === "bot") loadBotNamePlaceholder();
+    if (tab.dataset.tab === "cmds") loadBuiltinCommands();
+    if (tab.dataset.tab === "customcmds") loadCustomCommands();
   });
 });
 
@@ -333,49 +335,144 @@ clearEmbedBtn.addEventListener("click", () => {
 
 addEmbedFieldRow();
 
-// ---------- bot tab ----------
+// ---------- bot tab: name / avatar ----------
 
-const botAvatar = document.getElementById("botAvatar");
-const botName = document.getElementById("botName");
-const botId = document.getElementById("botId");
-const refreshBotBtn = document.getElementById("refreshBotBtn");
-const botMsg = document.getElementById("botMsg");
+const botNameInput = document.getElementById("botNameInput");
+const updateNameBtn = document.getElementById("updateNameBtn");
+const nameMsg = document.getElementById("nameMsg");
+const botAvatarInput = document.getElementById("botAvatarInput");
+const updateAvatarBtn = document.getElementById("updateAvatarBtn");
+const avatarMsg = document.getElementById("avatarMsg");
 
-function renderBotProfile(profile) {
-  if (!profile || !profile.name) {
-    botName.textContent = "Not connected";
-    botId.textContent = "—";
-    botAvatar.style.backgroundImage = "";
-    botAvatar.textContent = "?";
+async function loadBotNamePlaceholder() {
+  const profile = await api("/api/bot/profile");
+  botNameInput.placeholder = profile && profile.name
+    ? `Current: ${profile.name}`
+    : "Connect the bot first…";
+}
+
+updateNameBtn.addEventListener("click", async () => {
+  const name = botNameInput.value.trim();
+  if (!name) {
+    setMsg(nameMsg, "Type a new name first.", "error");
     return;
   }
-  botName.textContent = profile.display_name || profile.name;
-  botId.textContent = profile.id;
-  if (profile.avatar_url) {
-    botAvatar.style.backgroundImage = `url("${profile.avatar_url}")`;
-    botAvatar.textContent = "";
-  } else {
-    botAvatar.style.backgroundImage = "";
-    botAvatar.textContent = profile.name[0].toUpperCase();
-  }
-}
-
-async function loadBotProfile() {
-  const profile = await api("/api/bot/profile");
-  renderBotProfile(profile);
-}
-
-refreshBotBtn.addEventListener("click", async () => {
-  refreshBotBtn.disabled = true;
-  setMsg(botMsg, "Asking Discord for the latest profile...", "");
-  const data = await api("/api/bot/refresh", { method: "POST" });
-  refreshBotBtn.disabled = false;
+  updateNameBtn.disabled = true;
+  setMsg(nameMsg, "Updating on Discord...", "");
+  const data = await api("/api/bot/name", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  updateNameBtn.disabled = false;
 
   if (data.ok) {
-    renderBotProfile(data.profile);
-    setMsg(botMsg, "Up to date with Discord.", "success");
+    setMsg(nameMsg, "Name updated.", "success");
+    botNameInput.value = "";
+    loadBotNamePlaceholder();
   } else {
-    setMsg(botMsg, data.error || "Couldn't reach Discord.", "error");
+    setMsg(nameMsg, data.error || "Couldn't update the name.", "error");
+  }
+});
+
+updateAvatarBtn.addEventListener("click", async () => {
+  const file = botAvatarInput.files[0];
+  if (!file) {
+    setMsg(avatarMsg, "Choose an image first.", "error");
+    return;
+  }
+  updateAvatarBtn.disabled = true;
+  setMsg(avatarMsg, "Uploading to Discord...", "");
+  const formData = new FormData();
+  formData.append("avatar", file);
+  const data = await api("/api/bot/avatar", { method: "POST", body: formData });
+  updateAvatarBtn.disabled = false;
+
+  if (data.ok) {
+    setMsg(avatarMsg, "Profile picture updated.", "success");
+    botAvatarInput.value = "";
+  } else {
+    setMsg(avatarMsg, data.error || "Couldn't update the picture.", "error");
+  }
+});
+
+// ---------- cmds tab ----------
+
+const builtinCmdList = document.getElementById("builtinCmdList");
+
+async function loadBuiltinCommands() {
+  const cmds = await api("/api/commands/builtin");
+  builtinCmdList.innerHTML = cmds.map((c) => `
+    <div class="cmd-item">
+      <span class="cmd-name mono">!${escapeHtml(c.name)}</span>
+      <span class="cmd-desc">${escapeHtml(c.description)}</span>
+    </div>
+  `).join("");
+}
+
+// ---------- custom cmds tab ----------
+
+const customCmdList = document.getElementById("customCmdList");
+const customCmdEmpty = document.getElementById("customCmdEmpty");
+const customCmdName = document.getElementById("customCmdName");
+const customCmdDescription = document.getElementById("customCmdDescription");
+const customCmdCode = document.getElementById("customCmdCode");
+const createCustomCmdBtn = document.getElementById("createCustomCmdBtn");
+const customCmdMsg = document.getElementById("customCmdMsg");
+
+async function loadCustomCommands() {
+  const cmds = await api("/api/commands/custom");
+  customCmdEmpty.style.display = cmds.length ? "none" : "block";
+  customCmdList.innerHTML = cmds.map((c) => `
+    <div class="custom-cmd-item">
+      <div class="custom-cmd-head">
+        <span class="cmd-name mono">!${escapeHtml(c.name)}</span>
+        <button type="button" class="btn-ghost btn-small custom-cmd-remove" data-name="${escapeHtml(c.name)}">Remove</button>
+      </div>
+      ${c.description ? `<span class="custom-cmd-desc">${escapeHtml(c.description)}</span>` : ""}
+    </div>
+  `).join("");
+
+  customCmdList.querySelectorAll(".custom-cmd-remove").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      await api(`/api/commands/custom/${encodeURIComponent(btn.dataset.name)}`, { method: "DELETE" });
+      loadCustomCommands();
+    });
+  });
+}
+
+createCustomCmdBtn.addEventListener("click", async () => {
+  const name = customCmdName.value.trim().toLowerCase();
+  const description = customCmdDescription.value.trim();
+  const code = customCmdCode.value;
+
+  if (!name) {
+    setMsg(customCmdMsg, "Give the command a name.", "error");
+    return;
+  }
+  if (!code.trim()) {
+    setMsg(customCmdMsg, "Write some code for it to run.", "error");
+    return;
+  }
+
+  createCustomCmdBtn.disabled = true;
+  setMsg(customCmdMsg, "Saving...", "");
+  const data = await api("/api/commands/custom", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, description, code }),
+  });
+  createCustomCmdBtn.disabled = false;
+
+  if (data.ok) {
+    setMsg(customCmdMsg, "Command saved. Try it in Discord.", "success");
+    customCmdName.value = "";
+    customCmdDescription.value = "";
+    customCmdCode.value = "";
+    loadCustomCommands();
+  } else {
+    setMsg(customCmdMsg, data.error || "Couldn't save that command.", "error");
   }
 });
 
