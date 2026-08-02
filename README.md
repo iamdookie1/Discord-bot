@@ -2,7 +2,7 @@
 
 A minimal Discord bot you run on your phone with Termux, controlled from a
 local web UI at `http://127.0.0.1:5000` instead of the command line.
-
+.
 ## What's in here
 
 - `setup.sh` — Termux system-package check (installs anything missing), then launches the app
