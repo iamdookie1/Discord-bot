@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Control Deck</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+<div class="app">
+
+  <!-- ===== Sidebar rail ===== -->
+  <nav class="rail">
+    <div class="rail-brand">
+      <span class="rail-brand-mark">&#9679;</span>
+      <span class="rail-brand-text">Control<br>Deck</span>
+    </div>
+
+    <button class="rail-tab is-active" data-tab="home">
+      <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 3.2 2.5 10.6v10.2h6.3v-6.4h6.4v6.4h6.3V10.6L12 3.2Z"/></svg>
+      <span>Home</span>
+    </button>
+
+    <button class="rail-tab" data-tab="text">
+      <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M4 4h16a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H8l-4.6 3.4A.8.8 0 0 1 2 19.8V5a1 1 0 0 1 1-1Zm3 5h10v1.6H7V9Zm0 4h7v1.6H7V13Z"/></svg>
+      <span>Text</span>
+    </button>
+
+    <div class="rail-spacer"></div>
+
+    <div class="rail-footer">termux &middot; local</div>
+  </nav>
+
+  <!-- ===== Main column ===== -->
+  <div class="main">
+
+    <!-- Signature element: live status readout -->
+    <div class="readout">
+      <span class="readout-dot" id="statusDot"></span>
+      <span class="readout-label">LINK</span>
+      <span class="readout-value" id="statusText">OFFLINE</span>
+      <span class="readout-sep">/</span>
+      <span class="readout-label">SESSION</span>
+      <span class="readout-value" id="statusUser">&mdash;</span>
+    </div>
+
+    <!-- ===== Home tab ===== -->
+    <section class="panel is-active" id="tab-home">
+      <header class="panel-head">
+        <h1>Home</h1>
+        <p>Connect the bot to your Discord account with a token.</p>
+      </header>
+
+      <div class="card">
+        <label class="field-label" for="tokenInput">Bot token</label>
+        <div class="field-row">
+          <input type="password" id="tokenInput" class="field-input mono" placeholder="Paste your bot token" autocomplete="off">
+          <button class="btn-ghost" id="toggleTokenVisibility" type="button" title="Show/hide">&#128065;</button>
+        </div>
+        <p class="field-hint">Stored locally in <code>config.json</code> on this device only. Never share this token.</p>
+
+        <div class="btn-row">
+          <button class="btn-primary" id="saveTokenBtn">Save &amp; connect</button>
+          <button class="btn-outline" id="disconnectBtn">Disconnect</button>
+        </div>
+
+        <p class="form-msg" id="tokenMsg"></p>
+      </div>
+
+      <div class="card card-quiet">
+        <h2>Where do I get a token?</h2>
+        <p>Head to the <span class="mono">Discord Developer Portal</span> &rarr; your application &rarr; <span class="mono">Bot</span> &rarr; <span class="mono">Reset Token</span>. Make sure the bot has been invited to your server with the <span class="mono">Send Messages</span> permission.</p>
+      </div>
+    </section>
+
+    <!-- ===== Text tab ===== -->
+    <section class="panel" id="tab-text">
+      <header class="panel-head">
+        <h1>Text</h1>
+        <p>Send a message to any channel the bot can see.</p>
+      </header>
+
+      <div class="card">
+        <div class="field-grid">
+          <div>
+            <label class="field-label" for="serverSelect">Server</label>
+            <select id="serverSelect" class="field-input">
+              <option value="">Connect the bot first&hellip;</option>
+            </select>
+          </div>
+          <div>
+            <label class="field-label" for="channelSelect">Channel</label>
+            <select id="channelSelect" class="field-input">
+              <option value="">Pick a server first&hellip;</option>
+            </select>
+          </div>
+        </div>
+
+        <label class="field-label" for="messageInput">Message</label>
+        <textarea id="messageInput" class="field-input" rows="4" placeholder="Type what the bot should say&hellip;"></textarea>
+
+        <div class="btn-row">
+          <button class="btn-primary" id="sendBtn">Send message</button>
+          <span class="char-count" id="charCount">0 characters</span>
+        </div>
+
+        <p class="form-msg" id="sendMsg"></p>
+      </div>
+    </section>
+
+  </div>
+</div>
+
+<script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>
