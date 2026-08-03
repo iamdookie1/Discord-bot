@@ -16,8 +16,10 @@ tabulate>=0.9.0
 validators>=0.28.0
 
 # Music commands (see bot_music.py). Best-effort: PyNaCl needs the
-# libsodium system package (setup.sh installs it on Termux) and playback
-# needs the ffmpeg binary on PATH — if either is missing, !play just tells
-# the user what to install instead of the app failing to start.
+# libsodium system package (setup.sh installs it on Termux), davey is
+# Discord's now-mandatory DAVE end-to-end voice encryption, and playback
+# needs the ffmpeg binary on PATH — if any of these is missing, !play just
+# tells the user what to install instead of the app failing to start.
 PyNaCl>=1.5.0
+davey
 yt-dlp>=2024.4.9
