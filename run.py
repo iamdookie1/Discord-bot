@@ -35,6 +35,8 @@ EXTRA_PACKAGES = [
     ("colorama", "colorama"),
     ("tabulate", "tabulate"),
     ("validators", "validators"),
+    ("nacl", "PyNaCl"),
+    ("yt_dlp", "yt-dlp"),
 ]
 
 

@@ -4,6 +4,7 @@ import os
 from flask import Flask, jsonify, render_template, request
 
 import bot_commands
+import bot_rp
 from bot_manager import bot_manager
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -184,21 +185,46 @@ def bot_update_avatar():
     return jsonify(result), (200 if result.get("ok") else 400)
 
 
-# ---------------- commands ----------------
+# ---------------- built-in commands (utility / moderation / music) ----------------
 
 @app.route("/api/commands/builtin")
 def commands_builtin():
     return jsonify([
-        {"name": name, "description": description}
-        for name, (description, _handler) in bot_commands.BUILTIN_COMMANDS.items()
+        {
+            "name": name,
+            "description": spec.description,
+            "category": spec.category,
+            "required_perm": spec.required_perm,
+            "required_perm_label": bot_commands.PERM_LABELS.get(spec.required_perm, spec.required_perm),
+            "enabled": bot_commands.is_builtin_enabled(name),
+        }
+        for name, spec in bot_commands.BUILTIN_COMMANDS.items()
     ])
 
+
+@app.route("/api/commands/builtin/toggle", methods=["POST"])
+def commands_builtin_toggle():
+    data = request.get_json(force=True, silent=True) or {}
+    name = data.get("name", "")
+    enabled = bool(data.get("enabled", True))
+    if name not in bot_commands.BUILTIN_COMMANDS:
+        return jsonify({"ok": False, "error": "Unknown command."}), 404
+    bot_commands.set_builtin_enabled(name, enabled)
+    return jsonify({"ok": True})
+
+
+# ---------------- custom (python) commands ----------------
 
 @app.route("/api/commands/custom", methods=["GET"])
 def commands_custom_list():
     data = bot_commands.load_custom_commands()
     return jsonify([
-        {"name": name, "description": info.get("description", ""), "code": info.get("code", "")}
+        {
+            "name": name,
+            "description": info.get("description", ""),
+            "code": info.get("code", ""),
+            "enabled": info.get("enabled", True),
+        }
         for name, info in data.items()
     ])
 
@@ -214,6 +240,8 @@ def commands_custom_create():
         return jsonify({"ok": False, "error": "Name must be 1-32 characters: lowercase letters, numbers, - or _."}), 400
     if name in bot_commands.BUILTIN_COMMANDS:
         return jsonify({"ok": False, "error": f"!{name} is a built-in command — pick a different name."}), 400
+    if bot_rp.has_command(name) and name not in bot_commands.load_custom_commands():
+        return jsonify({"ok": False, "error": f"!{name} is already used as an RP command — pick a different name."}), 400
     if not code.strip():
         return jsonify({"ok": False, "error": "Code can't be empty."}), 400
 
@@ -226,9 +254,70 @@ def commands_custom_create():
     return jsonify({"ok": True})
 
 
+@app.route("/api/commands/custom/<name>/toggle", methods=["POST"])
+def commands_custom_toggle(name):
+    data = request.get_json(force=True, silent=True) or {}
+    enabled = bool(data.get("enabled", True))
+    ok = bot_commands.set_custom_command_enabled(name.strip().lower(), enabled)
+    return jsonify({"ok": ok})
+
+
 @app.route("/api/commands/custom/<name>", methods=["DELETE"])
 def commands_custom_delete(name):
     ok = bot_commands.delete_custom_command(name.strip().lower())
+    return jsonify({"ok": ok})
+
+
+# ---------------- roleplay (rp) commands ----------------
+
+@app.route("/api/rp/commands")
+def rp_commands_list():
+    return jsonify(bot_rp.list_commands())
+
+
+@app.route("/api/rp/commands", methods=["POST"])
+def rp_commands_create():
+    data = request.get_json(force=True, silent=True) or {}
+    name = data.get("name", "").strip().lower()
+    description = data.get("description", "").strip()
+    gifs = data.get("gifs") or []
+
+    if not bot_commands.COMMAND_NAME_RE.match(name):
+        return jsonify({"ok": False, "error": "Name must be 1-32 characters: lowercase letters, numbers, - or _."}), 400
+    if name in bot_commands.BUILTIN_COMMANDS or name in bot_commands.load_custom_commands():
+        return jsonify({"ok": False, "error": f"!{name} is already in use — pick a different name."}), 400
+    if bot_rp.has_command(name):
+        return jsonify({"ok": False, "error": f"!{name} already exists as an RP command."}), 400
+
+    bot_rp.create_custom(name, description, gifs)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/rp/commands/<name>/gifs", methods=["POST"])
+def rp_commands_gifs(name):
+    data = request.get_json(force=True, silent=True) or {}
+    gifs = data.get("gifs") or []
+    name = name.strip().lower()
+    if not bot_rp.has_command(name):
+        return jsonify({"ok": False, "error": "Unknown RP command."}), 404
+    bot_rp.set_gifs(name, gifs)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/rp/commands/<name>/toggle", methods=["POST"])
+def rp_commands_toggle(name):
+    data = request.get_json(force=True, silent=True) or {}
+    enabled = bool(data.get("enabled", True))
+    name = name.strip().lower()
+    if not bot_rp.has_command(name):
+        return jsonify({"ok": False, "error": "Unknown RP command."}), 404
+    bot_rp.set_enabled(name, enabled)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/rp/commands/<name>", methods=["DELETE"])
+def rp_commands_delete(name):
+    ok = bot_rp.delete_custom(name.strip().lower())
     return jsonify({"ok": ok})
 
 

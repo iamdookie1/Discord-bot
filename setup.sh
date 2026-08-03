@@ -31,12 +31,24 @@ echo "[2/4] Updating Termux package lists..."
 pkg update -y >/dev/null 2>&1 || true
 
 REQUIRED_PKGS=(python git libffi openssl)
+# Optional: only needed for the !play/!join music commands. A failure here
+# doesn't stop setup — bot_music.py detects what's missing and tells the
+# user instead of crashing.
+OPTIONAL_PKGS=(ffmpeg libsodium)
 
 echo "[3/4] Checking Termux packages..."
 for p in "${REQUIRED_PKGS[@]}"; do
   if ! pkg list-installed 2>/dev/null | grep -q "^$p/"; then
     echo "  installing $p..."
     pkg install -y "$p"
+  else
+    echo "  $p OK"
+  fi
+done
+for p in "${OPTIONAL_PKGS[@]}"; do
+  if ! pkg list-installed 2>/dev/null | grep -q "^$p/"; then
+    echo "  installing $p (for music commands)..."
+    pkg install -y "$p" || echo "  couldn't install $p — music commands won't work, everything else will"
   else
     echo "  $p OK"
   fi
