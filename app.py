@@ -4,6 +4,7 @@ import os
 from flask import Flask, jsonify, render_template, request
 
 import bot_commands
+import bot_music
 import bot_rp
 from bot_manager import bot_manager
 
@@ -185,6 +186,92 @@ def bot_update_avatar():
     return jsonify(result), (200 if result.get("ok") else 400)
 
 
+# ---------------- presence ("Playing X" / "Watching Y" / ...) ----------------
+
+@app.route("/api/bot/presence", methods=["GET"])
+def bot_get_presence():
+    cfg = load_config()
+    presence = cfg.get("presence") or {}
+    return jsonify({"type": presence.get("type", "playing"), "text": presence.get("text", "")})
+
+
+@app.route("/api/bot/presence", methods=["POST"])
+def bot_set_presence():
+    data = request.get_json(force=True, silent=True) or {}
+    activity_type = data.get("type", "playing")
+    text = data.get("text", "").strip()
+
+    if activity_type not in ("playing", "watching", "listening", "competing"):
+        return jsonify({"ok": False, "error": "Unknown activity type."}), 400
+    if len(text) > 128:
+        return jsonify({"ok": False, "error": "Keep it under 128 characters."}), 400
+
+    cfg = load_config()
+    if text:
+        cfg["presence"] = {"type": activity_type, "text": text}
+    else:
+        cfg.pop("presence", None)
+    save_config(cfg)
+
+    result = bot_manager.set_presence(activity_type, text)
+    return jsonify(result)
+
+
+# ---------------- music ----------------
+
+@app.route("/api/music/state")
+def music_state():
+    guild_id = request.args.get("guild_id", "")
+    if not guild_id or bot_manager.status != "online":
+        return jsonify({"available": bot_music._unavailable_reason() is None, "connected": False, "playing": False})
+    return jsonify(bot_music.get_state_dict(bot_manager.client, guild_id))
+
+
+@app.route("/api/music/action", methods=["POST"])
+def music_action():
+    data = request.get_json(force=True, silent=True) or {}
+    guild_id = data.get("guild_id", "")
+    action = data.get("action", "")
+
+    if bot_manager.status != "online":
+        return jsonify({"ok": False, "error": "Bot isn't connected yet."}), 400
+    if not guild_id:
+        return jsonify({"ok": False, "error": "Pick a server first."}), 400
+
+    handlers = {
+        "pause": bot_music.web_pause,
+        "resume": bot_music.web_resume,
+        "skip": bot_music.web_skip,
+        "stop": bot_music.web_stop,
+        "loop": bot_music.web_loop_cycle,
+    }
+    handler = handlers.get(action)
+    if not handler:
+        return jsonify({"ok": False, "error": "Unknown action."}), 400
+
+    result = handler(bot_manager.client, guild_id)
+    return jsonify(result), (200 if result.get("ok") else 400)
+
+
+@app.route("/api/music/volume", methods=["POST"])
+def music_volume():
+    data = request.get_json(force=True, silent=True) or {}
+    guild_id = data.get("guild_id", "")
+    delta = data.get("delta", 0)
+
+    if bot_manager.status != "online":
+        return jsonify({"ok": False, "error": "Bot isn't connected yet."}), 400
+    if not guild_id:
+        return jsonify({"ok": False, "error": "Pick a server first."}), 400
+    try:
+        delta = float(delta) / 100
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "Bad volume delta."}), 400
+
+    result = bot_music.web_volume(bot_manager.client, guild_id, delta)
+    return jsonify(result), (200 if result.get("ok") else 400)
+
+
 # ---------------- built-in commands (utility / moderation / music) ----------------
 
 @app.route("/api/commands/builtin")
@@ -325,6 +412,9 @@ def rp_commands_delete(name):
 
 def _autostart():
     cfg = load_config()
+    presence = cfg.get("presence") or {}
+    if presence.get("text"):
+        bot_manager.pending_presence = (presence.get("type", "playing"), presence["text"])
     token = cfg.get("token", "")
     if token:
         bot_manager.start(token)

@@ -51,6 +51,23 @@ COMMAND_NAME_RE = re.compile(r"^[a-z0-9_-]{1,32}$")
 
 _START_TIME = time.monotonic()
 
+# Per-user-per-command cooldown, applied to every command type (built-in,
+# RP, custom) uniformly. Silent when triggered — no extra reply — so a
+# spammed command can't itself become the spam.
+COOLDOWN_SECONDS = 3.0
+_last_used: dict[tuple[int, str], float] = {}
+
+
+def _is_on_cooldown(user_id: int, name: str) -> bool:
+    key = (user_id, name)
+    now = time.monotonic()
+    last = _last_used.get(key)
+    if last is not None and (now - last) < COOLDOWN_SECONDS:
+        return True
+    _last_used[key] = now
+    return False
+
+
 CommandSpec = namedtuple("CommandSpec", ["description", "handler", "required_perm", "category"])
 
 PERM_LABELS = {
@@ -780,7 +797,18 @@ async def handle_message(message: discord.Message, client: discord.Client):
     content = message.content[len(COMMAND_PREFIX) + len(parts[0]):].strip()
     ctx = Ctx(message, args, content, client)
 
-    if name in BUILTIN_COMMANDS:
+    is_builtin = name in BUILTIN_COMMANDS
+    is_rp = (not is_builtin) and bot_rp.has_command(name)
+    custom = None
+    if not (is_builtin or is_rp):
+        custom = load_custom_commands()
+        if name not in custom:
+            return  # not a recognized command — nothing to cool down or run
+
+    if _is_on_cooldown(message.author.id, name):
+        return
+
+    if is_builtin:
         if not is_builtin_enabled(name):
             return
         spec = BUILTIN_COMMANDS[name]
@@ -792,19 +820,17 @@ async def handle_message(message: discord.Message, client: discord.Client):
             await ctx.send(f"Command error: `{exc}`")
         return
 
-    if bot_rp.has_command(name):
+    if is_rp:
         try:
             await bot_rp.handle(name, ctx)
         except Exception as exc:  # noqa: BLE001
             await ctx.send(f"Command error: `{exc}`")
         return
 
-    custom = load_custom_commands()
-    if name in custom:
-        entry = custom[name]
-        if not entry.get("enabled", True):
-            return
-        try:
-            await run_custom_command(entry["code"], ctx)
-        except Exception as exc:  # noqa: BLE001
-            await ctx.send(f"Custom command error: `{exc}`")
+    entry = custom[name]
+    if not entry.get("enabled", True):
+        return
+    try:
+        await run_custom_command(entry["code"], ctx)
+    except Exception as exc:  # noqa: BLE001
+        await ctx.send(f"Custom command error: `{exc}`")
