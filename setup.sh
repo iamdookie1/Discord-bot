@@ -34,7 +34,7 @@ REQUIRED_PKGS=(python git libffi openssl)
 # Optional: only needed for the !play/!join music commands. A failure here
 # doesn't stop setup — bot_music.py detects what's missing and tells the
 # user instead of crashing.
-OPTIONAL_PKGS=(ffmpeg libsodium)
+OPTIONAL_PKGS=(ffmpeg libsodium pkg-config clang make)
 
 echo "[3/4] Checking Termux packages..."
 for p in "${REQUIRED_PKGS[@]}"; do
