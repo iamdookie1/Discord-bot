@@ -9,11 +9,11 @@ local web UI at `http://127.0.0.1:5000` instead of the command line.
 - `run.py` — checks/installs the required **Python** packages, then starts the server
 - `app.py` — the Flask app: all the `/api/...` routes the UI talks to
 - `bot_manager.py` — runs the actual discord.py client in the background
-- `bot_commands.py` — utility + moderation `!commands`, on/off toggle storage, and the custom-command sandbox
-- `bot_music.py` — the `!join`/`!play`/... voice commands
+- `bot_commands.py` — utility + moderation `!commands`, on/off toggle storage, per-user command cooldowns, and the custom-command sandbox
+- `bot_music.py` — the `!join`/`!play`/`!menu`/... voice commands, the interactive now-playing menu, and playback state
 - `bot_rp.py` — the `!kiss`/`!hug`/... roleplay commands and their GIF storage
 - `templates/`, `static/` — the UI (Home, Text, Bot, Cmds, Custom, RP tabs)
-- `config.json` — created automatically the first time you save a token (kept only on your device)
+- `config.json` — created automatically the first time you save a token or set a presence (kept only on your device)
 - `custom_commands.json`, `command_settings.json`, `rp_commands.json`, `warnings.json` — created automatically as you use the Custom/Cmds/RP tabs (all kept only on your device, none of it committed to git)
 
 ## First-time setup (in Termux)
@@ -57,16 +57,26 @@ Open `http://127.0.0.1:5000` in your phone's browser.
 - Pick a **server** from the dropdown (populated from the servers your bot is actually in)
 - Pick a **channel** in that server
 - Type a message and hit **Send message**, and/or fill in the **Embed** box below it (title, description, color, author, footer, thumbnail, image, timestamp, and repeatable fields) and hit **Send embed** — the two send independently
+- If something's playing in that server's voice channel, a **Music** card appears with the same controls as the Discord menu (pause/resume, skip, stop, volume, loop) — it polls every second instead of Discord's 5, so it feels a lot snappier
 
 **Bot tab**
 - Type a new name and hit **Update** to rename the bot on Discord directly — this fixes a bot name that looks "stuck" after being renamed in the Developer Portal, since it forces a real update instead of relying on a cached one
 - Choose an image and hit **Update profile picture** to change the bot's avatar
+- **Presence**: set what shows under the bot's name in the member list (Playing/Watching/Listening to/Competing in + text). Saved and reapplied automatically every time the bot connects.
 
-**Cmds tab** — 50+ built-in commands across three categories, each with an on/off toggle:
+**Cmds tab** — 50+ built-in commands across three categories, each with an on/off toggle, plus a search box to find one quickly:
 - **Utility** (16): `!ping`, `!cmds`/`!help`, `!uptime`, `!avatar`, `!userinfo`, `!serverinfo`, `!say` (also deletes your original message), `!coinflip`, `!roll`, `!8ball`, `!time`, `!calc`, `!choose`, `!reverse`, `!remind`
 - **Moderation** (16): `!kick`, `!ban`, `!softban`, `!unban`, `!timeout`, `!untimeout`, `!warn`, `!warnings`, `!clearwarnings`, `!purge`, `!slowmode`, `!lock`, `!unlock`, `!nick`, `!addrole`, `!removerole` — every one of these checks the caller has the matching Discord permission (and that the bot does too) before running anything, and refuses with a clear message if not
-- **Music** (8): `!join`, `!leave`, `!play`, `!pause`, `!resume`, `!skip`, `!stop`, `!queue` — needs the `ffmpeg` binary, `PyNaCl` (voice encryption), and `davey` (Discord's now-mandatory DAVE end-to-end voice encryption, required since March 2026); `setup.sh` tries to install all of it automatically on Termux, but if any piece is missing `!play` tells you instead of failing silently
+- **Music** (9): `!join`, `!leave`, `!play`, `!menu`, `!pause`, `!resume`, `!skip`, `!stop`, `!queue` — needs the `ffmpeg` binary, `PyNaCl` (voice encryption), and `davey` (Discord's now-mandatory DAVE end-to-end voice encryption, required since March 2026); `setup.sh` tries to install all of it automatically on Termux, but if any piece is missing `!play` tells you instead of failing silently. `!play` (and `!menu`) show an interactive now-playing menu — see below.
 - **Requires "Message Content Intent" turned on** for your bot in the Developer Portal (**Bot** page) — without it, discord.py can't read what people type, so no `!command` will ever trigger. This is separate from the token and has to be flipped on manually per-bot.
+- Every command, of every kind (built-in, RP, custom), has a 3-second per-user cooldown — spamming one just gets silently ignored until the cooldown clears.
+
+**The music menu** — `!play` posts (and reuses) one message per voice session with:
+- A progress bar, elapsed/total time, and volume/loop status, refreshed live
+- Buttons: Pause (turns into Resume while paused), Skip, Stop, Volume −/+, Loop (cycles Off → Track → Queue), and a Queue button that lists what's up next
+- Only works for whoever's in the same voice channel as the bot, to stop randoms in other channels from taking over
+- The embed itself only re-renders every 5 seconds (Discord rate-limits message edits harder than that), but any button press updates it immediately regardless of that timer
+- The bot auto-disconnects after 5 minutes with nothing playing
 
 **Custom tab**
 - Create your own `!command` in Python. The code you write runs as the body of `async def run(ctx): ...`, where `ctx` gives you `ctx.send(...)` to reply, `ctx.args` (the words after the command), `ctx.content` (the raw text after it), and `ctx.message` / `ctx.author` / `ctx.channel` / `ctx.guild` as normal discord.py objects.

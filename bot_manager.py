@@ -11,6 +11,13 @@ import discord
 
 import bot_commands
 
+PRESENCE_TYPES = {
+    "playing": discord.ActivityType.playing,
+    "watching": discord.ActivityType.watching,
+    "listening": discord.ActivityType.listening,
+    "competing": discord.ActivityType.competing,
+}
+
 
 class BotManager:
     def __init__(self):
@@ -21,6 +28,7 @@ class BotManager:
         self.status = "offline"      # offline | connecting | online | error
         self.error_message = ""
         self.user_tag = ""
+        self.pending_presence = None  # (activity_type, text) to (re)apply once online, or None
 
     # ---------- lifecycle ----------
 
@@ -60,6 +68,13 @@ class BotManager:
             self.status = "online"
             self.user_tag = str(self.client.user)
             print(f"[bot] Logged in as {self.client.user}")
+            if self.pending_presence:
+                activity_type, text = self.pending_presence
+                kind = PRESENCE_TYPES.get(activity_type, discord.ActivityType.playing)
+                try:
+                    await self.client.change_presence(activity=discord.Activity(type=kind, name=text))
+                except discord.HTTPException:
+                    pass
 
         @self.client.event
         async def on_message(message):
@@ -81,6 +96,7 @@ class BotManager:
 
     def _run_coro(self, coro, default=None):
         if not (self.loop and self.client and self.status == "online"):
+            coro.close()  # avoid "coroutine was never awaited" — it's already built, just unused
             return default
         future = asyncio.run_coroutine_threadsafe(coro, self.loop)
         try:
@@ -170,6 +186,25 @@ class BotManager:
         if result is None:
             return {"ok": False, "error": "Bot isn't connected."}
         return result
+
+    # ---------- presence ("Playing X" / "Watching Y" / ...) ----------
+
+    def set_presence(self, activity_type: str, text: str) -> dict:
+        """Stores the presence so it (re)applies on every future login, and
+        pushes it live immediately if already connected."""
+        text = (text or "").strip()
+        self.pending_presence = (activity_type, text) if text else None
+
+        async def _set():
+            if not self.pending_presence:
+                await self.client.change_presence(activity=None)
+            else:
+                kind = PRESENCE_TYPES.get(self.pending_presence[0], discord.ActivityType.playing)
+                await self.client.change_presence(activity=discord.Activity(type=kind, name=self.pending_presence[1]))
+            return True
+
+        applied_live = bool(self._run_coro(_set(), default=None))
+        return {"ok": True, "applied_live": applied_live}
 
 
 def _parse_color(value) -> "discord.Color":

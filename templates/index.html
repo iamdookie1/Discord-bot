@@ -212,6 +212,35 @@
 
         <p class="form-msg" id="embedMsg"></p>
       </div>
+
+      <!-- ===== Music groupbox ===== -->
+      <div class="card" id="musicCard" style="display:none;">
+        <h2 class="card-title">Music <span class="card-title-sub">updates live, faster than Discord's own menu</span></h2>
+
+        <div class="music-title" id="musicTrackTitle">Nothing playing</div>
+        <div class="music-progress-track">
+          <div class="music-progress-fill" id="musicProgressFill"></div>
+        </div>
+        <div class="music-time-row">
+          <span id="musicElapsed">0:00</span>
+          <span id="musicDuration">&mdash;</span>
+        </div>
+
+        <div class="btn-row music-controls">
+          <button class="btn-outline btn-small" id="musicPauseBtn">⏸️ Pause</button>
+          <button class="btn-outline btn-small" id="musicSkipBtn">⏭️ Skip</button>
+          <button class="btn-outline btn-small" id="musicStopBtn">⏹️ Stop</button>
+        </div>
+        <div class="btn-row music-controls">
+          <button class="btn-outline btn-small" id="musicVolDownBtn">🔉 Vol&minus;</button>
+          <span class="mono music-volume-label" id="musicVolumeLabel">100%</span>
+          <button class="btn-outline btn-small" id="musicVolUpBtn">🔊 Vol+</button>
+          <button class="btn-outline btn-small" id="musicLoopBtn">🔁 Loop: Off</button>
+        </div>
+
+        <p class="field-hint" id="musicQueueHint"></p>
+        <p class="form-msg" id="musicMsg"></p>
+      </div>
     </section>
 
     <!-- ===== Bot tab ===== -->
@@ -239,6 +268,31 @@
         </div>
         <p class="form-msg" id="avatarMsg"></p>
       </div>
+
+      <div class="card">
+        <h2 class="card-title">Presence</h2>
+        <div class="field-grid">
+          <div>
+            <label class="field-label" for="presenceType">Type</label>
+            <select id="presenceType" class="field-input">
+              <option value="playing">Playing</option>
+              <option value="watching">Watching</option>
+              <option value="listening">Listening to</option>
+              <option value="competing">Competing in</option>
+            </select>
+          </div>
+          <div>
+            <label class="field-label" for="presenceText">Text</label>
+            <input type="text" id="presenceText" class="field-input" placeholder="e.g. your commands" maxlength="128">
+          </div>
+        </div>
+        <div class="btn-row">
+          <button class="btn-primary" id="setPresenceBtn">Set status</button>
+          <button class="btn-ghost" id="clearPresenceBtn" type="button">Clear</button>
+        </div>
+        <p class="field-hint">Shows under the bot's name in the member list, e.g. &ldquo;Playing your commands&rdquo;. Saved and reapplied automatically every time the bot connects.</p>
+        <p class="form-msg" id="presenceMsg"></p>
+      </div>
     </section>
 
     <!-- ===== Cmds tab ===== -->
@@ -250,6 +304,10 @@
 
       <div class="card card-quiet">
         <p>Requires <span class="mono">Message Content Intent</span> turned on for this bot in the Developer Portal (Bot page) &mdash; otherwise it can't read command text. Moderation commands also check the caller's Discord permissions before running.</p>
+      </div>
+
+      <div class="card">
+        <input type="text" id="cmdSearchInput" class="field-input" placeholder="Search commands&hellip;">
       </div>
 
       <div class="card">

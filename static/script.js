@@ -9,8 +9,16 @@ tabs.forEach((tab) => {
     panels.forEach((p) => p.classList.remove("is-active"));
     tab.classList.add("is-active");
     document.getElementById(`tab-${tab.dataset.tab}`).classList.add("is-active");
-    if (tab.dataset.tab === "text") refreshGuilds();
-    if (tab.dataset.tab === "bot") loadBotNamePlaceholder();
+    if (tab.dataset.tab === "text") {
+      refreshGuilds();
+      startMusicPolling();
+    } else {
+      stopMusicPolling();
+    }
+    if (tab.dataset.tab === "bot") {
+      loadBotNamePlaceholder();
+      loadPresence();
+    }
     if (tab.dataset.tab === "cmds") loadBuiltinCommands();
     if (tab.dataset.tab === "customcmds") loadCustomCommands();
     if (tab.dataset.tab === "rp") loadRpCommands();
@@ -146,7 +154,10 @@ async function refreshChannels(guildId) {
     channels.map((c) => `<option value="${c.id}">#${escapeHtml(c.name)}</option>`).join("");
 }
 
-serverSelect.addEventListener("change", () => refreshChannels(serverSelect.value));
+serverSelect.addEventListener("change", () => {
+  refreshChannels(serverSelect.value);
+  pollMusicState();
+});
 
 messageInput.addEventListener("input", () => {
   charCount.textContent = `${messageInput.value.length} characters`;
@@ -336,6 +347,141 @@ clearEmbedBtn.addEventListener("click", () => {
 
 addEmbedFieldRow();
 
+// ---------- text tab: music ----------
+
+const musicCard = document.getElementById("musicCard");
+const musicTrackTitle = document.getElementById("musicTrackTitle");
+const musicProgressFill = document.getElementById("musicProgressFill");
+const musicElapsed = document.getElementById("musicElapsed");
+const musicDuration = document.getElementById("musicDuration");
+const musicPauseBtn = document.getElementById("musicPauseBtn");
+const musicSkipBtn = document.getElementById("musicSkipBtn");
+const musicStopBtn = document.getElementById("musicStopBtn");
+const musicVolDownBtn = document.getElementById("musicVolDownBtn");
+const musicVolUpBtn = document.getElementById("musicVolUpBtn");
+const musicVolumeLabel = document.getElementById("musicVolumeLabel");
+const musicLoopBtn = document.getElementById("musicLoopBtn");
+const musicQueueHint = document.getElementById("musicQueueHint");
+const musicMsg = document.getElementById("musicMsg");
+
+const MUSIC_POLL_MS = 1000;
+let musicPollTimer = null;
+
+function fmtMusicTime(seconds) {
+  seconds = Math.max(0, Math.floor(seconds || 0));
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  const mm = h ? String(m).padStart(2, "0") : m;
+  const ss = String(s).padStart(2, "0");
+  return h ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
+}
+
+function renderMusicState(data) {
+  if (!data || !data.available) {
+    musicCard.style.display = "none";
+    return;
+  }
+  musicCard.style.display = "block";
+
+  if (!data.connected || !data.title) {
+    musicTrackTitle.textContent = "Nothing playing";
+    musicProgressFill.style.width = "0%";
+    musicElapsed.textContent = "0:00";
+    musicDuration.textContent = "—";
+    musicVolumeLabel.textContent = `${data.volume ?? 100}%`;
+    musicLoopBtn.textContent = `🔁 Loop: ${(data.loop_mode || "off").replace(/^\w/, (c) => c.toUpperCase())}`;
+    musicPauseBtn.textContent = "⏸️ Pause";
+    musicQueueHint.textContent = "";
+    return;
+  }
+
+  musicTrackTitle.textContent = data.title;
+  musicElapsed.textContent = fmtMusicTime(data.elapsed);
+  musicPauseBtn.textContent = data.paused ? "▶️ Resume" : "⏸️ Pause";
+  musicVolumeLabel.textContent = `${data.volume}%`;
+  musicLoopBtn.textContent = `🔁 Loop: ${data.loop_mode.replace(/^\w/, (c) => c.toUpperCase())}`;
+
+  if (data.duration) {
+    musicDuration.textContent = fmtMusicTime(data.duration);
+    musicProgressFill.style.width = `${Math.min(100, (data.elapsed / data.duration) * 100)}%`;
+  } else {
+    musicDuration.textContent = "—";
+    musicProgressFill.style.width = "0%";
+  }
+
+  musicQueueHint.textContent = data.queue_length
+    ? `${data.queue_length} more in queue: ${data.queue.slice(0, 3).join(", ")}${data.queue_length > 3 ? "…" : ""}`
+    : "";
+}
+
+async function pollMusicState() {
+  const guildId = serverSelect.value;
+  if (!guildId) {
+    musicCard.style.display = "none";
+    return;
+  }
+  try {
+    const data = await api(`/api/music/state?guild_id=${encodeURIComponent(guildId)}`);
+    renderMusicState(data);
+  } catch (e) {
+    // transient fetch failure — leave the card as-is, next poll will retry
+  }
+}
+
+function startMusicPolling() {
+  stopMusicPolling();
+  pollMusicState();
+  musicPollTimer = setInterval(pollMusicState, MUSIC_POLL_MS);
+}
+
+function stopMusicPolling() {
+  if (musicPollTimer) {
+    clearInterval(musicPollTimer);
+    musicPollTimer = null;
+  }
+}
+
+async function musicAction(action) {
+  const guildId = serverSelect.value;
+  if (!guildId) return;
+  const data = await api("/api/music/action", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ guild_id: guildId, action }),
+  });
+  if (!data.ok) {
+    setMsg(musicMsg, data.error || "Couldn't do that.", "error");
+  } else {
+    setMsg(musicMsg, "", "");
+  }
+  pollMusicState();
+}
+
+musicPauseBtn.addEventListener("click", () => {
+  musicAction(musicPauseBtn.textContent.includes("Resume") ? "resume" : "pause");
+});
+musicSkipBtn.addEventListener("click", () => musicAction("skip"));
+musicStopBtn.addEventListener("click", () => musicAction("stop"));
+musicLoopBtn.addEventListener("click", () => musicAction("loop"));
+
+async function musicVolume(delta) {
+  const guildId = serverSelect.value;
+  if (!guildId) return;
+  const data = await api("/api/music/volume", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ guild_id: guildId, delta }),
+  });
+  if (!data.ok) {
+    setMsg(musicMsg, data.error || "Couldn't do that.", "error");
+  }
+  pollMusicState();
+}
+
+musicVolDownBtn.addEventListener("click", () => musicVolume(-10));
+musicVolUpBtn.addEventListener("click", () => musicVolume(10));
+
 // ---------- bot tab: name / avatar ----------
 
 const botNameInput = document.getElementById("botNameInput");
@@ -397,6 +543,51 @@ updateAvatarBtn.addEventListener("click", async () => {
   }
 });
 
+// ---------- bot tab: presence ----------
+
+const presenceType = document.getElementById("presenceType");
+const presenceText = document.getElementById("presenceText");
+const setPresenceBtn = document.getElementById("setPresenceBtn");
+const clearPresenceBtn = document.getElementById("clearPresenceBtn");
+const presenceMsg = document.getElementById("presenceMsg");
+
+async function loadPresence() {
+  const data = await api("/api/bot/presence");
+  presenceType.value = data.type || "playing";
+  presenceText.value = data.text || "";
+}
+
+async function savePresence(type, text) {
+  setPresenceBtn.disabled = true;
+  setMsg(presenceMsg, "Saving...", "");
+  const data = await api("/api/bot/presence", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ type, text }),
+  });
+  setPresenceBtn.disabled = false;
+
+  if (data.ok) {
+    setMsg(presenceMsg, data.applied_live ? "Updated." : "Saved — will apply once the bot connects.", "success");
+  } else {
+    setMsg(presenceMsg, data.error || "Couldn't set that.", "error");
+  }
+}
+
+setPresenceBtn.addEventListener("click", () => {
+  const text = presenceText.value.trim();
+  if (!text) {
+    setMsg(presenceMsg, "Type something first.", "error");
+    return;
+  }
+  savePresence(presenceType.value, text);
+});
+
+clearPresenceBtn.addEventListener("click", () => {
+  presenceText.value = "";
+  savePresence(presenceType.value, "");
+});
+
 // ---------- cmds tab ----------
 
 const utilityCmdList = document.getElementById("utilityCmdList");
@@ -419,6 +610,7 @@ function renderToggle(name, enabled, onToggle) {
 function renderBuiltinCmdItem(c) {
   const item = document.createElement("div");
   item.className = "cmd-item";
+  item.dataset.search = `${c.name} ${c.description}`.toLowerCase();
 
   item.appendChild(renderToggle(c.name, c.enabled, async (checked) => {
     await api("/api/commands/builtin/toggle", {
@@ -458,7 +650,19 @@ async function loadBuiltinCommands() {
   fill(utilityCmdList, byCategory.utility);
   fill(moderationCmdList, byCategory.moderation);
   fill(musicCmdList, byCategory.music);
+  filterBuiltinCommands();
 }
+
+const cmdSearchInput = document.getElementById("cmdSearchInput");
+
+function filterBuiltinCommands() {
+  const query = cmdSearchInput.value.trim().toLowerCase();
+  document.querySelectorAll("#tab-cmds .cmd-item").forEach((item) => {
+    item.style.display = !query || item.dataset.search.includes(query) ? "" : "none";
+  });
+}
+
+cmdSearchInput.addEventListener("input", filterBuiltinCommands);
 
 // ---------- custom cmds tab ----------
 
