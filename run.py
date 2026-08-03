@@ -37,6 +37,7 @@ EXTRA_PACKAGES = [
     ("tabulate", "tabulate"),
     ("validators", "validators"),
     ("nacl", "PyNaCl"),
+    ("davey", "davey"),
     ("yt_dlp", "yt-dlp"),
 ]
 
@@ -104,6 +105,13 @@ def check_and_install():
                     "[setup] Couldn't install PyNaCl — music commands (!join/!play/...) won't "
                     "work, everything else will. On Termux, run `pkg install -y libsodium "
                     "pkg-config clang make` and re-run setup.sh to try again."
+                )
+            elif pip_name == "davey":
+                print(
+                    "[setup] Couldn't install davey — Discord now requires it for voice, so "
+                    "music commands won't work, everything else will. It's a newer package; "
+                    "if this keeps failing on Termux, try `pkg install -y rust` first (some "
+                    "of its dependencies build native code) and re-run setup.sh."
                 )
             else:
                 print(f"[setup] Couldn't install {pip_name} — continuing without it.")

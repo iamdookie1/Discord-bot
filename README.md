@@ -65,7 +65,7 @@ Open `http://127.0.0.1:5000` in your phone's browser.
 **Cmds tab** — 50+ built-in commands across three categories, each with an on/off toggle:
 - **Utility** (16): `!ping`, `!cmds`/`!help`, `!uptime`, `!avatar`, `!userinfo`, `!serverinfo`, `!say` (also deletes your original message), `!coinflip`, `!roll`, `!8ball`, `!time`, `!calc`, `!choose`, `!reverse`, `!remind`
 - **Moderation** (16): `!kick`, `!ban`, `!softban`, `!unban`, `!timeout`, `!untimeout`, `!warn`, `!warnings`, `!clearwarnings`, `!purge`, `!slowmode`, `!lock`, `!unlock`, `!nick`, `!addrole`, `!removerole` — every one of these checks the caller has the matching Discord permission (and that the bot does too) before running anything, and refuses with a clear message if not
-- **Music** (8): `!join`, `!leave`, `!play`, `!pause`, `!resume`, `!skip`, `!stop`, `!queue` — needs the `ffmpeg` binary and `PyNaCl` (voice encryption); `setup.sh` tries to install both automatically on Termux (`ffmpeg`, `libsodium`), but if either is missing `!play` tells you instead of failing silently
+- **Music** (8): `!join`, `!leave`, `!play`, `!pause`, `!resume`, `!skip`, `!stop`, `!queue` — needs the `ffmpeg` binary, `PyNaCl` (voice encryption), and `davey` (Discord's now-mandatory DAVE end-to-end voice encryption, required since March 2026); `setup.sh` tries to install all of it automatically on Termux, but if any piece is missing `!play` tells you instead of failing silently
 - **Requires "Message Content Intent" turned on** for your bot in the Developer Portal (**Bot** page) — without it, discord.py can't read what people type, so no `!command` will ever trigger. This is separate from the token and has to be flipped on manually per-bot.
 
 **Custom tab**

@@ -1,8 +1,10 @@
 """
-Voice/music commands. Needs PyNaCl (voice encryption), the `ffmpeg` binary
-on PATH, and yt-dlp (stream extraction) to actually play audio — all
-optional installs, so these commands degrade to a clear error instead of
-crashing if any piece is missing.
+Voice/music commands. Needs PyNaCl (voice encryption), davey (Discord's
+mandatory DAVE end-to-end voice encryption protocol, required by Discord
+itself since March 2026), the `ffmpeg` binary on PATH, and yt-dlp (stream
+extraction) to actually play audio — all optional installs, so these
+commands degrade to a clear error instead of crashing if any piece is
+missing.
 """
 import asyncio
 import shutil
@@ -14,6 +16,12 @@ try:
     _HAS_NACL = True
 except ImportError:
     _HAS_NACL = False
+
+try:
+    import davey  # noqa: F401
+    _HAS_DAVEY = True
+except ImportError:
+    _HAS_DAVEY = False
 
 try:
     import yt_dlp
@@ -37,6 +45,8 @@ def _unavailable_reason():
     missing = []
     if not _HAS_NACL:
         missing.append("PyNaCl")
+    if not _HAS_DAVEY:
+        missing.append("davey")
     if not _HAS_FFMPEG:
         missing.append("the ffmpeg binary")
     if not _HAS_YTDLP:
