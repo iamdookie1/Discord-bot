@@ -13,6 +13,7 @@ tabs.forEach((tab) => {
     if (tab.dataset.tab === "bot") loadBotNamePlaceholder();
     if (tab.dataset.tab === "cmds") loadBuiltinCommands();
     if (tab.dataset.tab === "customcmds") loadCustomCommands();
+    if (tab.dataset.tab === "rp") loadRpCommands();
   });
 });
 
@@ -398,47 +399,156 @@ updateAvatarBtn.addEventListener("click", async () => {
 
 // ---------- cmds tab ----------
 
-const builtinCmdList = document.getElementById("builtinCmdList");
+const utilityCmdList = document.getElementById("utilityCmdList");
+const moderationCmdList = document.getElementById("moderationCmdList");
+const musicCmdList = document.getElementById("musicCmdList");
+
+function renderToggle(name, enabled, onToggle) {
+  const label = document.createElement("label");
+  label.className = "toggle-switch";
+  const input = document.createElement("input");
+  input.type = "checkbox";
+  input.checked = enabled;
+  const slider = document.createElement("span");
+  slider.className = "toggle-slider";
+  label.append(input, slider);
+  input.addEventListener("change", () => onToggle(input.checked));
+  return label;
+}
+
+function renderBuiltinCmdItem(c) {
+  const item = document.createElement("div");
+  item.className = "cmd-item";
+
+  item.appendChild(renderToggle(c.name, c.enabled, async (checked) => {
+    await api("/api/commands/builtin/toggle", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: c.name, enabled: checked }),
+    });
+  }));
+
+  const info = document.createElement("div");
+  info.className = "cmd-info";
+  info.innerHTML = `
+    <span class="cmd-name mono">!${escapeHtml(c.name)}</span>
+    <span class="cmd-desc">${escapeHtml(c.description)}</span>
+  `;
+  item.appendChild(info);
+
+  if (c.required_perm_label) {
+    const badge = document.createElement("span");
+    badge.className = "perm-badge";
+    badge.textContent = c.required_perm_label;
+    item.appendChild(badge);
+  }
+
+  return item;
+}
 
 async function loadBuiltinCommands() {
   const cmds = await api("/api/commands/builtin");
-  builtinCmdList.innerHTML = cmds.map((c) => `
-    <div class="cmd-item">
-      <span class="cmd-name mono">!${escapeHtml(c.name)}</span>
-      <span class="cmd-desc">${escapeHtml(c.description)}</span>
-    </div>
-  `).join("");
+  const byCategory = { utility: [], moderation: [], music: [] };
+  cmds.forEach((c) => { (byCategory[c.category] || byCategory.utility).push(c); });
+
+  const fill = (el, list) => {
+    el.innerHTML = "";
+    list.sort((a, b) => a.name.localeCompare(b.name)).forEach((c) => el.appendChild(renderBuiltinCmdItem(c)));
+  };
+  fill(utilityCmdList, byCategory.utility);
+  fill(moderationCmdList, byCategory.moderation);
+  fill(musicCmdList, byCategory.music);
 }
 
 // ---------- custom cmds tab ----------
 
 const customCmdList = document.getElementById("customCmdList");
 const customCmdEmpty = document.getElementById("customCmdEmpty");
+const customCmdFormTitle = document.getElementById("customCmdFormTitle");
 const customCmdName = document.getElementById("customCmdName");
 const customCmdDescription = document.getElementById("customCmdDescription");
 const customCmdCode = document.getElementById("customCmdCode");
 const createCustomCmdBtn = document.getElementById("createCustomCmdBtn");
+const cancelEditCustomCmdBtn = document.getElementById("cancelEditCustomCmdBtn");
 const customCmdMsg = document.getElementById("customCmdMsg");
+
+let editingCustomCmd = null;
+
+function resetCustomCmdForm() {
+  editingCustomCmd = null;
+  customCmdFormTitle.textContent = "New custom command";
+  customCmdName.value = "";
+  customCmdName.disabled = false;
+  customCmdDescription.value = "";
+  customCmdCode.value = "";
+  createCustomCmdBtn.textContent = "Create command";
+  cancelEditCustomCmdBtn.style.display = "none";
+  setMsg(customCmdMsg, "", "");
+}
+
+function beginEditCustomCmd(cmd) {
+  editingCustomCmd = cmd.name;
+  customCmdFormTitle.textContent = `Editing !${cmd.name}`;
+  customCmdName.value = cmd.name;
+  customCmdName.disabled = true;
+  customCmdDescription.value = cmd.description || "";
+  customCmdCode.value = cmd.code || "";
+  createCustomCmdBtn.textContent = "Save changes";
+  cancelEditCustomCmdBtn.style.display = "";
+  setMsg(customCmdMsg, "", "");
+  customCmdCode.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+cancelEditCustomCmdBtn.addEventListener("click", resetCustomCmdForm);
 
 async function loadCustomCommands() {
   const cmds = await api("/api/commands/custom");
   customCmdEmpty.style.display = cmds.length ? "none" : "block";
-  customCmdList.innerHTML = cmds.map((c) => `
-    <div class="custom-cmd-item">
-      <div class="custom-cmd-head">
-        <span class="cmd-name mono">!${escapeHtml(c.name)}</span>
-        <button type="button" class="btn-ghost btn-small custom-cmd-remove" data-name="${escapeHtml(c.name)}">Remove</button>
-      </div>
-      ${c.description ? `<span class="custom-cmd-desc">${escapeHtml(c.description)}</span>` : ""}
-    </div>
-  `).join("");
+  customCmdList.innerHTML = "";
 
-  customCmdList.querySelectorAll(".custom-cmd-remove").forEach((btn) => {
-    btn.addEventListener("click", async () => {
-      btn.disabled = true;
-      await api(`/api/commands/custom/${encodeURIComponent(btn.dataset.name)}`, { method: "DELETE" });
+  cmds.forEach((c) => {
+    const item = document.createElement("div");
+    item.className = "custom-cmd-item";
+
+    item.appendChild(renderToggle(c.name, c.enabled, async (checked) => {
+      await api(`/api/commands/custom/${encodeURIComponent(c.name)}/toggle`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: checked }),
+      });
+    }));
+
+    const info = document.createElement("div");
+    info.className = "cmd-info";
+    info.innerHTML = `
+      <span class="cmd-name mono">!${escapeHtml(c.name)}</span>
+      <span class="cmd-desc">${escapeHtml(c.description || "")}</span>
+    `;
+    item.appendChild(info);
+
+    const actions = document.createElement("div");
+    actions.className = "custom-cmd-actions";
+
+    const editBtn = document.createElement("button");
+    editBtn.type = "button";
+    editBtn.className = "btn-outline btn-small";
+    editBtn.textContent = "Edit";
+    editBtn.addEventListener("click", () => beginEditCustomCmd(c));
+
+    const removeBtn = document.createElement("button");
+    removeBtn.type = "button";
+    removeBtn.className = "btn-ghost btn-small";
+    removeBtn.textContent = "Remove";
+    removeBtn.addEventListener("click", async () => {
+      removeBtn.disabled = true;
+      await api(`/api/commands/custom/${encodeURIComponent(c.name)}`, { method: "DELETE" });
+      if (editingCustomCmd === c.name) resetCustomCmdForm();
       loadCustomCommands();
     });
+
+    actions.append(editBtn, removeBtn);
+    item.appendChild(actions);
+    customCmdList.appendChild(item);
   });
 }
 
@@ -467,12 +577,154 @@ createCustomCmdBtn.addEventListener("click", async () => {
 
   if (data.ok) {
     setMsg(customCmdMsg, "Command saved. Try it in Discord.", "success");
-    customCmdName.value = "";
-    customCmdDescription.value = "";
-    customCmdCode.value = "";
+    resetCustomCmdForm();
     loadCustomCommands();
   } else {
     setMsg(customCmdMsg, data.error || "Couldn't save that command.", "error");
+  }
+});
+
+// ---------- rp tab ----------
+
+const rpCmdList = document.getElementById("rpCmdList");
+const rpCmdName = document.getElementById("rpCmdName");
+const rpCmdDescription = document.getElementById("rpCmdDescription");
+const createRpCmdBtn = document.getElementById("createRpCmdBtn");
+const rpCreateMsg = document.getElementById("rpCreateMsg");
+
+const MAX_RP_GIFS = 5;
+
+function renderRpCmdItem(c) {
+  const item = document.createElement("div");
+  item.className = "rp-cmd-item";
+
+  const row = document.createElement("div");
+  row.className = "rp-cmd-row";
+
+  row.appendChild(renderToggle(c.name, c.enabled, async (checked) => {
+    await api(`/api/rp/commands/${encodeURIComponent(c.name)}/toggle`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled: checked }),
+    });
+  }));
+
+  const info = document.createElement("div");
+  info.className = "cmd-info";
+  const gifCount = c.gifs.length ? `${c.gifs.length} gif${c.gifs.length === 1 ? "" : "s"}` : "no gifs yet";
+  info.innerHTML = `
+    <span class="cmd-name mono">!${escapeHtml(c.name)}</span>
+    <span class="cmd-desc">${escapeHtml(c.description || "")} &middot; ${gifCount}</span>
+  `;
+  row.appendChild(info);
+
+  const actions = document.createElement("div");
+  actions.className = "custom-cmd-actions";
+
+  const editBtn = document.createElement("button");
+  editBtn.type = "button";
+  editBtn.className = "btn-outline btn-small";
+  editBtn.textContent = "Edit gifs";
+  actions.appendChild(editBtn);
+
+  if (c.custom) {
+    const deleteBtn = document.createElement("button");
+    deleteBtn.type = "button";
+    deleteBtn.className = "btn-ghost btn-small";
+    deleteBtn.textContent = "Delete";
+    deleteBtn.addEventListener("click", async () => {
+      deleteBtn.disabled = true;
+      await api(`/api/rp/commands/${encodeURIComponent(c.name)}`, { method: "DELETE" });
+      loadRpCommands();
+    });
+    actions.appendChild(deleteBtn);
+  }
+
+  row.appendChild(actions);
+  item.appendChild(row);
+
+  const editor = document.createElement("div");
+  editor.className = "rp-gif-editor";
+  editor.style.display = "none";
+
+  const gifInputs = [];
+  for (let i = 0; i < MAX_RP_GIFS; i++) {
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "field-input mono rp-gif-input";
+    input.placeholder = `GIF URL ${i + 1}`;
+    input.value = c.gifs[i] || "";
+    gifInputs.push(input);
+    editor.appendChild(input);
+  }
+
+  const editorMsg = document.createElement("p");
+  editorMsg.className = "form-msg";
+
+  const saveRow = document.createElement("div");
+  saveRow.className = "btn-row";
+  const saveBtn = document.createElement("button");
+  saveBtn.type = "button";
+  saveBtn.className = "btn-primary btn-small";
+  saveBtn.textContent = "Save GIFs";
+  saveBtn.addEventListener("click", async () => {
+    saveBtn.disabled = true;
+    const gifs = gifInputs.map((inp) => inp.value.trim());
+    const data = await api(`/api/rp/commands/${encodeURIComponent(c.name)}/gifs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ gifs }),
+    });
+    saveBtn.disabled = false;
+    if (data.ok) {
+      setMsg(editorMsg, "Saved.", "success");
+      loadRpCommands();
+    } else {
+      setMsg(editorMsg, data.error || "Couldn't save.", "error");
+    }
+  });
+  saveRow.appendChild(saveBtn);
+  editor.append(saveRow, editorMsg);
+
+  editBtn.addEventListener("click", () => {
+    editor.style.display = editor.style.display === "none" ? "flex" : "none";
+  });
+
+  item.appendChild(editor);
+  return item;
+}
+
+async function loadRpCommands() {
+  const cmds = await api("/api/rp/commands");
+  rpCmdList.innerHTML = "";
+  cmds.forEach((c) => rpCmdList.appendChild(renderRpCmdItem(c)));
+}
+
+createRpCmdBtn.addEventListener("click", async () => {
+  const name = rpCmdName.value.trim().toLowerCase();
+  const description = rpCmdDescription.value.trim();
+
+  if (!name) {
+    setMsg(rpCreateMsg, "Give the command a name.", "error");
+    return;
+  }
+
+  createRpCmdBtn.disabled = true;
+  setMsg(rpCreateMsg, "Saving...", "");
+  const data = await api("/api/rp/commands", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, description, gifs: [] }),
+  });
+  createRpCmdBtn.disabled = false;
+
+  if (data.ok) {
+    setMsg(rpCreateMsg, "Created — add GIFs to it below.", "success");
+    rpCmdName.value = "";
+    rpCmdDescription.value = "";
+    loadRpCommands();
+  } else {
+    setMsg(rpCreateMsg, data.error || "Couldn't create that command.", "error");
   }
 });
 

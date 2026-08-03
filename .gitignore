@@ -1,5 +1,8 @@
 config.json
 custom_commands.json
+command_settings.json
+rp_commands.json
+warnings.json
 __pycache__/
 *.pyc
 .venv/

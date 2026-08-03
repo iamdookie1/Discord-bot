@@ -9,10 +9,12 @@ local web UI at `http://127.0.0.1:5000` instead of the command line.
 - `run.py` — checks/installs the required **Python** packages, then starts the server
 - `app.py` — the Flask app: all the `/api/...` routes the UI talks to
 - `bot_manager.py` — runs the actual discord.py client in the background
-- `bot_commands.py` — the built-in `!commands` and the custom-command sandbox
-- `templates/`, `static/` — the UI (Home, Text, Bot, Cmds, Custom tabs)
+- `bot_commands.py` — utility + moderation `!commands`, on/off toggle storage, and the custom-command sandbox
+- `bot_music.py` — the `!join`/`!play`/... voice commands
+- `bot_rp.py` — the `!kiss`/`!hug`/... roleplay commands and their GIF storage
+- `templates/`, `static/` — the UI (Home, Text, Bot, Cmds, Custom, RP tabs)
 - `config.json` — created automatically the first time you save a token (kept only on your device)
-- `custom_commands.json` — created automatically the first time you save a custom command (kept only on your device)
+- `custom_commands.json`, `command_settings.json`, `rp_commands.json`, `warnings.json` — created automatically as you use the Custom/Cmds/RP tabs (all kept only on your device, none of it committed to git)
 
 ## First-time setup (in Termux)
 
@@ -60,14 +62,22 @@ Open `http://127.0.0.1:5000` in your phone's browser.
 - Type a new name and hit **Update** to rename the bot on Discord directly — this fixes a bot name that looks "stuck" after being renamed in the Developer Portal, since it forces a real update instead of relying on a cached one
 - Choose an image and hit **Update profile picture** to change the bot's avatar
 
-**Cmds tab**
-- Reference list of the built-in commands anyone can type in a channel the bot can see: `!ping`, `!cmds`/`!help`, `!uptime`, `!avatar`, `!userinfo`, `!serverinfo`, `!say`, `!coinflip`, `!roll`, `!8ball`, `!time`
+**Cmds tab** — 50+ built-in commands across three categories, each with an on/off toggle:
+- **Utility** (16): `!ping`, `!cmds`/`!help`, `!uptime`, `!avatar`, `!userinfo`, `!serverinfo`, `!say` (also deletes your original message), `!coinflip`, `!roll`, `!8ball`, `!time`, `!calc`, `!choose`, `!reverse`, `!remind`
+- **Moderation** (16): `!kick`, `!ban`, `!softban`, `!unban`, `!timeout`, `!untimeout`, `!warn`, `!warnings`, `!clearwarnings`, `!purge`, `!slowmode`, `!lock`, `!unlock`, `!nick`, `!addrole`, `!removerole` — every one of these checks the caller has the matching Discord permission (and that the bot does too) before running anything, and refuses with a clear message if not
+- **Music** (8): `!join`, `!leave`, `!play`, `!pause`, `!resume`, `!skip`, `!stop`, `!queue` — needs the `ffmpeg` binary and `PyNaCl` (voice encryption); `setup.sh` tries to install both automatically on Termux (`ffmpeg`, `libsodium`), but if either is missing `!play` tells you instead of failing silently
 - **Requires "Message Content Intent" turned on** for your bot in the Developer Portal (**Bot** page) — without it, discord.py can't read what people type, so no `!command` will ever trigger. This is separate from the token and has to be flipped on manually per-bot.
 
 **Custom tab**
 - Create your own `!command` in Python. The code you write runs as the body of `async def run(ctx): ...`, where `ctx` gives you `ctx.send(...)` to reply, `ctx.args` (the words after the command), `ctx.content` (the raw text after it), and `ctx.message` / `ctx.author` / `ctx.channel` / `ctx.guild` as normal discord.py objects.
 - A wide set of modules — `discord`, `random`, `requests`, `datetime`, `json`, `re`, `os`, and more — are already imported, so you don't need to install anything to use them.
+- **Edit** re-opens a saved command for editing (name is locked; description/code aren't) and re-saves over the same command. Each one also has its own on/off toggle, separate from deleting it.
 - This code runs with full access on the device the bot is on — only add commands you wrote (or trust) yourself.
+
+**RP tab**
+- Action commands like `!kiss @user` and `!hug @user` — ten are built in (`kiss`, `hug`, `slap`, `pat`, `cuddle`, `poke`, `bonk`, `highfive`, `tickle`, `wave`), and **New custom RP command** lets you add more by name.
+- Every one of them, built-in or custom, needs GIFs added before it'll do anything — hit **Edit gifs** on any command (including the built-in ones) to set up to 5 GIF URLs. Empty slots are ignored, extras past 5 are ignored, and the bot picks one at random each time the command runs. If none are set yet, using the command sends an error telling you to add some instead of failing silently.
+- Each RP command has its own on/off toggle too; only custom ones can be deleted outright (built-ins can only be toggled off).
 
 ## Getting a bot token
 
