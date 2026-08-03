@@ -10,6 +10,7 @@ package check always happens first:
     python run.py
 """
 import importlib
+import os
 import subprocess
 import sys
 
@@ -50,11 +51,25 @@ def _missing(packages):
     return missing
 
 
+# By default PyNaCl tries to download and compile its own bundled copy of
+# libsodium from source, which is what "Failed building wheel for PyNaCl"
+# usually is on Termux (no autoconf/libtool for that build). Setting
+# SODIUM_INSTALL=system instead tells it to link against the libsodium
+# setup.sh already installs via `pkg install libsodium` — much more likely
+# to actually succeed.
+_PIP_ENV_OVERRIDES = {
+    "PyNaCl": {"SODIUM_INSTALL": "system"},
+}
+
+
 def _pip_install(pip_name):
     print(f"[setup]   -> pip install {pip_name}")
+    env = os.environ.copy()
+    env.update(_PIP_ENV_OVERRIDES.get(pip_name, {}))
     result = subprocess.run(
         [sys.executable, "-m", "pip", "install", "--upgrade", pip_name],
         check=False,
+        env=env,
     )
     return result.returncode == 0
 
@@ -84,7 +99,14 @@ def check_and_install():
 
     for pip_name in missing_extra:
         if not _pip_install(pip_name):
-            print(f"[setup] Couldn't install {pip_name} — continuing without it.")
+            if pip_name == "PyNaCl":
+                print(
+                    "[setup] Couldn't install PyNaCl — music commands (!join/!play/...) won't "
+                    "work, everything else will. On Termux, run `pkg install -y libsodium "
+                    "pkg-config clang make` and re-run setup.sh to try again."
+                )
+            else:
+                print(f"[setup] Couldn't install {pip_name} — continuing without it.")
 
     print("[setup] Package check complete.")
 
