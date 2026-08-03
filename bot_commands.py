@@ -198,13 +198,35 @@ _SAFE_OPS = {
 }
 
 
+# Caps the size of any intermediate/final result — without this, something
+# like `92 ** 35 ** 99` (== 92 ** (35 ** 99), since ** is right-associative)
+# tries to build a number with ~10^152 digits: Python has no integer size
+# limit, so it just hangs burning CPU and memory, freezing the whole bot
+# (and on a phone, can get the whole process killed for using too much RAM).
+_MAX_CALC_BITS = 4096  # ~1233 decimal digits — generous, but bounded
+
+
+def _check_calc_size(value):
+    if isinstance(value, int) and abs(value).bit_length() > _MAX_CALC_BITS:
+        raise ValueError("Result too large")
+    return value
+
+
 def _safe_eval(node):
     if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
         return node.value
     if isinstance(node, ast.BinOp) and type(node.op) in _SAFE_OPS:
-        return _SAFE_OPS[type(node.op)](_safe_eval(node.left), _safe_eval(node.right))
+        left = _safe_eval(node.left)
+        right = _safe_eval(node.right)
+        if isinstance(node.op, ast.Pow) and isinstance(left, int) and isinstance(right, int) and right > 0:
+            # Estimate the result's bit length *before* computing it — for
+            # `**` the actual computation is what hangs, so the check has
+            # to happen first, not after.
+            if right * max(abs(left).bit_length(), 1) > _MAX_CALC_BITS:
+                raise ValueError("Result too large")
+        return _check_calc_size(_SAFE_OPS[type(node.op)](left, right))
     if isinstance(node, ast.UnaryOp) and type(node.op) in _SAFE_OPS:
-        return _SAFE_OPS[type(node.op)](_safe_eval(node.operand))
+        return _check_calc_size(_SAFE_OPS[type(node.op)](_safe_eval(node.operand)))
     raise ValueError("unsupported expression")
 
 
@@ -215,6 +237,8 @@ async def _cmd_calc(ctx: Ctx):
     try:
         result = _safe_eval(ast.parse(ctx.content, mode="eval").body)
         await ctx.send(f"`{result}`")
+    except ValueError:
+        await ctx.send("That result is too large to compute (max ~1233 digits).")
     except Exception:
         await ctx.send("Couldn't evaluate that. Only numbers and + - * / // % ** are allowed.")
 
