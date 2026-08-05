@@ -38,6 +38,12 @@ from collections import namedtuple
 
 import discord
 
+try:
+    import requests
+    _HAS_REQUESTS = True
+except ImportError:
+    _HAS_REQUESTS = False
+
 import bot_music
 import bot_nsfw
 import bot_rp
@@ -299,6 +305,88 @@ async def _cmd_remind(ctx: Ctx):
     asyncio.create_task(_fire())
 
 
+_SUBREDDIT_RE = re.compile(r"^[A-Za-z0-9_]{2,24}$")
+_REDDIT_HEADERS = {"User-Agent": "ControlDeckDiscordBot/1.0 (personal use)"}
+_REDDIT_IMAGE_RE = re.compile(r"\.(jpg|jpeg|png|gif)$", re.IGNORECASE)
+
+
+def _reddit_post_embed(subreddit: str, post: dict) -> discord.Embed:
+    title = (post.get("title") or "(no title)")[:256]
+    permalink = "https://www.reddit.com" + post.get("permalink", "")
+    embed = discord.Embed(title=title, url=permalink, color=discord.Color.orange())
+    embed.set_footer(text=f"r/{subreddit} · {post.get('score', 0)} upvotes · u/{post.get('author', '?')}")
+
+    url = post.get("url_overridden_by_dest") or post.get("url") or ""
+    if post.get("post_hint") == "image" or _REDDIT_IMAGE_RE.search(url):
+        embed.set_image(url=url)
+    elif post.get("is_self") and post.get("selftext"):
+        text = post["selftext"]
+        embed.description = text[:400] + ("…" if len(text) > 400 else "")
+    elif url:
+        embed.description = url
+
+    return embed
+
+
+async def _cmd_reddit(ctx: Ctx):
+    if not _HAS_REQUESTS:
+        await ctx.send("Reddit fetching isn't available — the `requests` package didn't install. Run `bash setup.sh` again.")
+        return
+    if not ctx.args:
+        await ctx.send("Usage: `!reddit <subreddit>`")
+        return
+
+    subreddit = ctx.args[0].strip().lstrip("/")
+    if subreddit.lower().startswith("r/"):
+        subreddit = subreddit[2:]
+    if not _SUBREDDIT_RE.match(subreddit):
+        await ctx.send("That doesn't look like a valid subreddit name.")
+        return
+
+    loop = asyncio.get_event_loop()
+
+    def _fetch_about():
+        r = requests.get(f"https://www.reddit.com/r/{subreddit}/about.json", headers=_REDDIT_HEADERS, timeout=8)
+        r.raise_for_status()
+        return r.json().get("data", {})
+
+    try:
+        about = await loop.run_in_executor(None, _fetch_about)
+    except Exception:
+        await ctx.send(f"Couldn't find r/{subreddit} — check the name and try again.")
+        return
+
+    if about.get("over18"):
+        if not bot_nsfw.is_owner(ctx):
+            return  # silent — doesn't confirm to anyone else that this even ran
+        if not bot_nsfw.is_nsfw_channel(ctx):
+            await ctx.send(f"r/{subreddit} is NSFW — this only works in a channel marked NSFW in Discord's channel settings.")
+            return
+
+    def _fetch_posts():
+        r = requests.get(f"https://www.reddit.com/r/{subreddit}/hot.json?limit=25", headers=_REDDIT_HEADERS, timeout=8)
+        r.raise_for_status()
+        return [c["data"] for c in r.json().get("data", {}).get("children", []) if not c["data"].get("stickied")]
+
+    try:
+        posts = await loop.run_in_executor(None, _fetch_posts)
+    except Exception:
+        await ctx.send(f"Couldn't load posts from r/{subreddit}.")
+        return
+
+    # Even in an SFW subreddit, individual posts can be flagged NSFW —
+    # apply the same owner + nsfw-channel gate to those unless already cleared above.
+    authorized = bot_nsfw.is_owner(ctx) and bot_nsfw.is_nsfw_channel(ctx)
+    if not authorized:
+        posts = [p for p in posts if not p.get("over_18")]
+
+    if not posts:
+        await ctx.send(f"No posts found in r/{subreddit} right now.")
+        return
+
+    await ctx.send(embed=_reddit_post_embed(subreddit, random.choice(posts)))
+
+
 UTILITY_COMMANDS = {
     "ping": CommandSpec("Checks the bot's latency to Discord.", _cmd_ping, None, "utility"),
     "cmds": CommandSpec("Lists every available command.", _cmd_cmds, None, "utility"),
@@ -316,6 +404,10 @@ UTILITY_COMMANDS = {
     "choose": CommandSpec("Picks one option from a | separated list.", _cmd_choose, None, "utility"),
     "reverse": CommandSpec("Reverses your text.", _cmd_reverse, None, "utility"),
     "remind": CommandSpec("Reminds you in the channel after N minutes.", _cmd_remind, None, "utility"),
+    "reddit": CommandSpec(
+        "Fetches a random post from a subreddit. NSFW subreddits/posts only work for the owner in an NSFW channel.",
+        _cmd_reddit, None, "utility",
+    ),
 }
 
 
@@ -637,12 +729,7 @@ for _name, (_desc, _handler, _perm) in bot_music.MUSIC_COMMANDS.items():
 
 
 def name_taken(name: str) -> bool:
-    return (
-        name in BUILTIN_COMMANDS
-        or name in load_custom_commands()
-        or bot_rp.has_command(name)
-        or bot_nsfw.has_command(name)
-    )
+    return name in BUILTIN_COMMANDS or name in load_custom_commands() or bot_rp.has_command(name)
 
 
 # ==================== built-in on/off toggles ====================
@@ -805,9 +892,8 @@ async def handle_message(message: discord.Message, client: discord.Client):
 
     is_builtin = name in BUILTIN_COMMANDS
     is_rp = (not is_builtin) and bot_rp.has_command(name)
-    is_nsfw = (not is_builtin and not is_rp) and bot_nsfw.has_command(name)
     custom = None
-    if not (is_builtin or is_rp or is_nsfw):
+    if not (is_builtin or is_rp):
         custom = load_custom_commands()
         if name not in custom:
             return  # not a recognized command — nothing to cool down or run
@@ -830,13 +916,6 @@ async def handle_message(message: discord.Message, client: discord.Client):
     if is_rp:
         try:
             await bot_rp.handle(name, ctx)
-        except Exception as exc:  # noqa: BLE001
-            await ctx.send(f"Command error: `{exc}`")
-        return
-
-    if is_nsfw:
-        try:
-            await bot_nsfw.handle(name, ctx)
         except Exception as exc:  # noqa: BLE001
             await ctx.send(f"Command error: `{exc}`")
         return

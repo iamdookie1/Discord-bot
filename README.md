@@ -13,10 +13,10 @@ local web UI at `http://127.0.0.1:5000` instead of the command line.
 - `bot_music.py` — the `!join`/`!play`/`!menu`/... voice commands, the interactive now-playing menu, and playback state
 - `bot_rp.py` — the `!kiss`/`!hug`/... roleplay commands and their GIF storage
 - `bot_backup.py` — server structure snapshot/restore for the Backup tab (web UI only, no chat command)
-- `bot_nsfw.py` — owner-and-nsfw-channel-locked commands you build yourself, with your own media
-- `templates/`, `static/` — the UI (Home, Text, Bot, Cmds, Custom, RP, Backup, NSFW tabs)
+- `bot_nsfw.py` — the owner-ID + nsfw-channel gate `!reddit` uses for anything Reddit flags as over_18
+- `templates/`, `static/` — the UI (Home, Text, Bot, Cmds, Custom, RP, Backup tabs)
 - `config.json` — created automatically the first time you save a token or set a presence (kept only on your device)
-- `custom_commands.json`, `command_settings.json`, `rp_commands.json`, `warnings.json`, `server_backups.json`, `nsfw_commands.json` — created automatically as you use the Custom/Cmds/RP/Backup/NSFW tabs (all kept only on your device, none of it committed to git)
+- `custom_commands.json`, `command_settings.json`, `rp_commands.json`, `warnings.json`, `server_backups.json` — created automatically as you use the Custom/Cmds/RP/Backup tabs (all kept only on your device, none of it committed to git)
 
 ## First-time setup (in Termux)
 
@@ -66,12 +66,14 @@ Open `http://127.0.0.1:5000` in your phone's browser.
 - Choose an image and hit **Update profile picture** to change the bot's avatar
 - **Presence**: set what shows under the bot's name in the member list (Playing/Watching/Listening to/Competing in + text). Saved and reapplied automatically every time the bot connects.
 
-**Cmds tab** — 50+ built-in commands across three categories, each with an on/off toggle, plus a search box to find one quickly:
-- **Utility** (16): `!ping`, `!cmds`/`!help`, `!uptime`, `!avatar`, `!userinfo`, `!serverinfo`, `!say` (also deletes your original message), `!coinflip`, `!roll`, `!8ball`, `!time`, `!calc`, `!choose`, `!reverse`, `!remind`
+**Cmds tab** — 40+ built-in commands across three categories, each with an on/off toggle, plus a search box to find one quickly:
+- **Utility** (17): `!ping`, `!cmds`/`!help`, `!uptime`, `!avatar`, `!userinfo`, `!serverinfo`, `!say` (also deletes your original message), `!coinflip`, `!roll`, `!8ball`, `!time`, `!calc`, `!choose`, `!reverse`, `!remind`, `!reddit <subreddit>` (see below)
 - **Moderation** (16): `!kick`, `!ban`, `!softban`, `!unban`, `!timeout`, `!untimeout`, `!warn`, `!warnings`, `!clearwarnings`, `!purge`, `!slowmode`, `!lock`, `!unlock`, `!nick`, `!addrole`, `!removerole` — every one of these checks the caller has the matching Discord permission (and that the bot does too) before running anything, and refuses with a clear message if not
 - **Music** (9): `!join`, `!leave`, `!play`, `!menu`, `!pause`, `!resume`, `!skip`, `!stop`, `!queue` — needs the `ffmpeg` binary, `PyNaCl` (voice encryption), and `davey` (Discord's now-mandatory DAVE end-to-end voice encryption, required since March 2026); `setup.sh` tries to install all of it automatically on Termux, but if any piece is missing `!play` tells you instead of failing silently. `!play` (and `!menu`) show an interactive now-playing menu — see below.
 - **Requires "Message Content Intent" turned on** for your bot in the Developer Portal (**Bot** page) — without it, discord.py can't read what people type, so no `!command` will ever trigger. This is separate from the token and has to be flipped on manually per-bot.
 - Every command, of every kind (built-in, RP, custom), has a 3-second per-user cooldown — spamming one just gets silently ignored until the cooldown clears.
+
+**`!reddit <subreddit>`** — pulls a random post from that subreddit via Reddit's public JSON API (no scraping, no third-party content APIs). It's a normal command for normal subreddits, usable by anyone in any channel. If the subreddit itself is flagged NSFW by Reddit (or an individual post is, even in an otherwise SFW subreddit), the same two-part gate as before applies: only Discord user ID `1409771422011887678` can see it (anyone else gets total silence, not an error), and only inside a channel Discord itself has marked NSFW (an explicit refusal otherwise). This app never sources or ships content itself — it only ever reflects back whatever Reddit already flagged and whatever subreddit you asked for.
 
 **The music menu** — `!play` posts (and reuses) one message per voice session with:
 - A progress bar, elapsed/total time, and volume/loop status, refreshed live
@@ -98,11 +100,6 @@ Open `http://127.0.0.1:5000` in your phone's browser.
   - **Full wipe and replace** — deletes every existing channel and role in the target server first, then recreates the backup exactly. Irreversible, so the button asks for an explicit confirmation before doing anything.
 - The bot needs **Manage Roles** and **Manage Channels** permission in the target server for either mode to work.
 - Large servers can take a while to save/restore — Discord rate-limits how fast channels and roles can be created, so this isn't instant.
-
-**NSFW tab**
-- Every command here is entirely your own — there are no built-ins, unlike RP. Create a name and description, then attach up to 5 media URLs of your own choosing under **Edit media**; this app never fetches, generates, or ships any content itself.
-- Locked down two ways, both enforced server-side regardless of what the Discord message looks like: only Discord user ID `1409771422011887678` can ever trigger one (anyone else gets total silence — the bot won't even acknowledge the command exists), and it only runs inside a channel Discord itself has marked NSFW (refusing with a message otherwise, since that's Discord's own rule for this kind of content).
-- Same toggle/edit/delete pattern as the other command tabs.
 
 ## Getting a bot token
 

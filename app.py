@@ -6,7 +6,6 @@ from flask import Flask, jsonify, render_template, request
 import bot_backup
 import bot_commands
 import bot_music
-import bot_nsfw
 import bot_rp
 from bot_manager import bot_manager
 
@@ -377,8 +376,8 @@ def commands_custom_create():
     if name in bot_commands.BUILTIN_COMMANDS:
         return jsonify({"ok": False, "error": f"!{name} is a built-in command — pick a different name."}), 400
     already_custom = name in bot_commands.load_custom_commands()
-    if not already_custom and (bot_rp.has_command(name) or bot_nsfw.has_command(name)):
-        return jsonify({"ok": False, "error": f"!{name} is already in use — pick a different name."}), 400
+    if not already_custom and bot_rp.has_command(name):
+        return jsonify({"ok": False, "error": f"!{name} is already used as an RP command — pick a different name."}), 400
     if not code.strip():
         return jsonify({"ok": False, "error": "Code can't be empty."}), 400
 
@@ -423,8 +422,8 @@ def rp_commands_create():
         return jsonify({"ok": False, "error": "Name must be 1-32 characters: lowercase letters, numbers, - or _."}), 400
     if name in bot_commands.BUILTIN_COMMANDS or name in bot_commands.load_custom_commands():
         return jsonify({"ok": False, "error": f"!{name} is already in use — pick a different name."}), 400
-    if bot_rp.has_command(name) or bot_nsfw.has_command(name):
-        return jsonify({"ok": False, "error": f"!{name} already exists — pick a different name."}), 400
+    if bot_rp.has_command(name):
+        return jsonify({"ok": False, "error": f"!{name} already exists as an RP command."}), 400
 
     bot_rp.create_custom(name, description, gifs)
     return jsonify({"ok": True})
@@ -455,54 +454,6 @@ def rp_commands_toggle(name):
 @app.route("/api/rp/commands/<name>", methods=["DELETE"])
 def rp_commands_delete(name):
     ok = bot_rp.delete_custom(name.strip().lower())
-    return jsonify({"ok": ok})
-
-
-# ---------------- nsfw commands (owner-only, nsfw-channel-only) ----------------
-
-@app.route("/api/nsfw/commands")
-def nsfw_commands_list():
-    return jsonify(bot_nsfw.list_commands())
-
-
-@app.route("/api/nsfw/commands", methods=["POST"])
-def nsfw_commands_create():
-    data = request.get_json(force=True, silent=True) or {}
-    name = data.get("name", "").strip().lower()
-    description = data.get("description", "").strip()
-    media = data.get("media") or []
-
-    if not bot_commands.COMMAND_NAME_RE.match(name):
-        return jsonify({"ok": False, "error": "Name must be 1-32 characters: lowercase letters, numbers, - or _."}), 400
-    if bot_commands.name_taken(name):
-        return jsonify({"ok": False, "error": f"!{name} is already in use — pick a different name."}), 400
-
-    bot_nsfw.create_custom(name, description, media)
-    return jsonify({"ok": True})
-
-
-@app.route("/api/nsfw/commands/<name>/media", methods=["POST"])
-def nsfw_commands_media(name):
-    data = request.get_json(force=True, silent=True) or {}
-    media = data.get("media") or []
-    name = name.strip().lower()
-    if not bot_nsfw.has_command(name):
-        return jsonify({"ok": False, "error": "Unknown command."}), 404
-    bot_nsfw.set_media(name, media)
-    return jsonify({"ok": True})
-
-
-@app.route("/api/nsfw/commands/<name>/toggle", methods=["POST"])
-def nsfw_commands_toggle(name):
-    data = request.get_json(force=True, silent=True) or {}
-    enabled = bool(data.get("enabled", True))
-    ok = bot_nsfw.set_enabled(name.strip().lower(), enabled)
-    return jsonify({"ok": ok})
-
-
-@app.route("/api/nsfw/commands/<name>", methods=["DELETE"])
-def nsfw_commands_delete(name):
-    ok = bot_nsfw.delete_custom(name.strip().lower())
     return jsonify({"ok": ok})
 
 
