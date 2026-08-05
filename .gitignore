@@ -4,7 +4,6 @@ command_settings.json
 rp_commands.json
 warnings.json
 server_backups.json
-nsfw_commands.json
 __pycache__/
 *.pyc
 .venv/
