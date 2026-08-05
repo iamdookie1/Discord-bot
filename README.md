@@ -13,9 +13,10 @@ local web UI at `http://127.0.0.1:5000` instead of the command line.
 - `bot_music.py` — the `!join`/`!play`/`!menu`/... voice commands, the interactive now-playing menu, and playback state
 - `bot_rp.py` — the `!kiss`/`!hug`/... roleplay commands and their GIF storage
 - `bot_backup.py` — server structure snapshot/restore for the Backup tab (web UI only, no chat command)
-- `templates/`, `static/` — the UI (Home, Text, Bot, Cmds, Custom, RP, Backup tabs)
+- `bot_nsfw.py` — owner-and-nsfw-channel-locked commands you build yourself, with your own media
+- `templates/`, `static/` — the UI (Home, Text, Bot, Cmds, Custom, RP, Backup, NSFW tabs)
 - `config.json` — created automatically the first time you save a token or set a presence (kept only on your device)
-- `custom_commands.json`, `command_settings.json`, `rp_commands.json`, `warnings.json`, `server_backups.json` — created automatically as you use the Custom/Cmds/RP/Backup tabs (all kept only on your device, none of it committed to git)
+- `custom_commands.json`, `command_settings.json`, `rp_commands.json`, `warnings.json`, `server_backups.json`, `nsfw_commands.json` — created automatically as you use the Custom/Cmds/RP/Backup/NSFW tabs (all kept only on your device, none of it committed to git)
 
 ## First-time setup (in Termux)
 
@@ -97,6 +98,11 @@ Open `http://127.0.0.1:5000` in your phone's browser.
   - **Full wipe and replace** — deletes every existing channel and role in the target server first, then recreates the backup exactly. Irreversible, so the button asks for an explicit confirmation before doing anything.
 - The bot needs **Manage Roles** and **Manage Channels** permission in the target server for either mode to work.
 - Large servers can take a while to save/restore — Discord rate-limits how fast channels and roles can be created, so this isn't instant.
+
+**NSFW tab**
+- Every command here is entirely your own — there are no built-ins, unlike RP. Create a name and description, then attach up to 5 media URLs of your own choosing under **Edit media**; this app never fetches, generates, or ships any content itself.
+- Locked down two ways, both enforced server-side regardless of what the Discord message looks like: only Discord user ID `1409771422011887678` can ever trigger one (anyone else gets total silence — the bot won't even acknowledge the command exists), and it only runs inside a channel Discord itself has marked NSFW (refusing with a message otherwise, since that's Discord's own rule for this kind of content).
+- Same toggle/edit/delete pattern as the other command tabs.
 
 ## Getting a bot token
 

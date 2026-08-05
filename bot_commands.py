@@ -39,6 +39,7 @@ from collections import namedtuple
 import discord
 
 import bot_music
+import bot_nsfw
 import bot_rp
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -636,7 +637,12 @@ for _name, (_desc, _handler, _perm) in bot_music.MUSIC_COMMANDS.items():
 
 
 def name_taken(name: str) -> bool:
-    return name in BUILTIN_COMMANDS or name in load_custom_commands() or bot_rp.has_command(name)
+    return (
+        name in BUILTIN_COMMANDS
+        or name in load_custom_commands()
+        or bot_rp.has_command(name)
+        or bot_nsfw.has_command(name)
+    )
 
 
 # ==================== built-in on/off toggles ====================
@@ -799,8 +805,9 @@ async def handle_message(message: discord.Message, client: discord.Client):
 
     is_builtin = name in BUILTIN_COMMANDS
     is_rp = (not is_builtin) and bot_rp.has_command(name)
+    is_nsfw = (not is_builtin and not is_rp) and bot_nsfw.has_command(name)
     custom = None
-    if not (is_builtin or is_rp):
+    if not (is_builtin or is_rp or is_nsfw):
         custom = load_custom_commands()
         if name not in custom:
             return  # not a recognized command — nothing to cool down or run
@@ -823,6 +830,13 @@ async def handle_message(message: discord.Message, client: discord.Client):
     if is_rp:
         try:
             await bot_rp.handle(name, ctx)
+        except Exception as exc:  # noqa: BLE001
+            await ctx.send(f"Command error: `{exc}`")
+        return
+
+    if is_nsfw:
+        try:
+            await bot_nsfw.handle(name, ctx)
         except Exception as exc:  # noqa: BLE001
             await ctx.send(f"Command error: `{exc}`")
         return
