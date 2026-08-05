@@ -55,6 +55,11 @@
       <span>Backup</span>
     </button>
 
+    <button class="rail-tab" data-tab="nsfw">
+      <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 2 2 7v6c0 5 4.2 9.4 10 11 5.8-1.6 10-6 10-11V7l-10-5Zm-1 6h2v6h-2V8Zm0 8h2v2h-2v-2Z"/></svg>
+      <span>NSFW</span>
+    </button>
+
     <div class="rail-spacer"></div>
 
     <div class="rail-footer">termux &middot; local</div>
@@ -456,6 +461,46 @@
         <h2 class="card-title">Saved backups</h2>
         <div class="cmd-list" id="backupList"></div>
         <p class="field-hint" id="backupListEmpty">No backups yet.</p>
+      </div>
+    </section>
+
+    <!-- ===== NSFW tab ===== -->
+    <section class="panel" id="tab-nsfw">
+      <header class="panel-head">
+        <h1>NSFW</h1>
+        <p>Commands you build yourself, locked to one person and one kind of channel.</p>
+      </header>
+
+      <div class="card card-quiet">
+        <p>
+          Every command here only ever responds to Discord user ID <span class="mono">1409771422011887678</span>,
+          silently ignoring anyone else &mdash; and only inside a channel Discord itself has marked NSFW, refusing
+          with a message otherwise. This app doesn't fetch, generate, or ship any media of its own &mdash; every
+          URL you attach below is yours to provide and you're responsible for it.
+        </p>
+      </div>
+
+      <div class="card">
+        <div class="cmd-list" id="nsfwCmdList"></div>
+        <p class="field-hint" id="nsfwCmdEmpty">No commands yet.</p>
+      </div>
+
+      <div class="card">
+        <h2 class="card-title">New command</h2>
+        <div class="field-grid">
+          <div>
+            <label class="field-label" for="nsfwCmdName">Command name</label>
+            <input type="text" id="nsfwCmdName" class="field-input mono" placeholder="e.g. whatever">
+          </div>
+          <div>
+            <label class="field-label" for="nsfwCmdDescription">Description</label>
+            <input type="text" id="nsfwCmdDescription" class="field-input" placeholder="What it does">
+          </div>
+        </div>
+        <div class="btn-row">
+          <button class="btn-primary" id="createNsfwCmdBtn">Create command</button>
+        </div>
+        <p class="form-msg" id="nsfwCreateMsg"></p>
       </div>
     </section>
 
