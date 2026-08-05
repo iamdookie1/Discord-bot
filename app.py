@@ -3,6 +3,7 @@ import os
 
 from flask import Flask, jsonify, render_template, request
 
+import bot_backup
 import bot_commands
 import bot_music
 import bot_rp
@@ -269,6 +270,53 @@ def music_volume():
         return jsonify({"ok": False, "error": "Bad volume delta."}), 400
 
     result = bot_music.web_volume(bot_manager.client, guild_id, delta)
+    return jsonify(result), (200 if result.get("ok") else 400)
+
+
+# ---------------- server backup / restore (web UI only) ----------------
+
+@app.route("/api/backups")
+def backups_list():
+    return jsonify(bot_backup.list_backups())
+
+
+@app.route("/api/backups", methods=["POST"])
+def backups_create():
+    data = request.get_json(force=True, silent=True) or {}
+    guild_id = data.get("guild_id", "")
+
+    if bot_manager.status != "online":
+        return jsonify({"ok": False, "error": "Bot isn't connected yet."}), 400
+    if not guild_id:
+        return jsonify({"ok": False, "error": "Pick a server first."}), 400
+
+    result = bot_manager.save_backup(guild_id)
+    return jsonify(result), (200 if result.get("ok") else 400)
+
+
+@app.route("/api/backups/<backup_id>", methods=["DELETE"])
+def backups_delete(backup_id):
+    ok = bot_backup.delete_backup(backup_id)
+    return jsonify({"ok": ok})
+
+
+@app.route("/api/backups/<backup_id>/load", methods=["POST"])
+def backups_load(backup_id):
+    data = request.get_json(force=True, silent=True) or {}
+    guild_id = data.get("guild_id", "")
+    mode = data.get("mode", "additive")
+    confirm = bool(data.get("confirm", False))
+
+    if bot_manager.status != "online":
+        return jsonify({"ok": False, "error": "Bot isn't connected yet."}), 400
+    if not guild_id:
+        return jsonify({"ok": False, "error": "Pick a server first."}), 400
+    if mode not in ("additive", "replace"):
+        return jsonify({"ok": False, "error": "Unknown load mode."}), 400
+    if mode == "replace" and not confirm:
+        return jsonify({"ok": False, "error": "Replace mode requires confirmation."}), 400
+
+    result = bot_manager.load_backup(guild_id, backup_id, mode)
     return jsonify(result), (200 if result.get("ok") else 400)
 
 

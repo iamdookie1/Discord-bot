@@ -9,6 +9,7 @@ import threading
 
 import discord
 
+import bot_backup
 import bot_commands
 
 PRESENCE_TYPES = {
@@ -94,13 +95,13 @@ class BotManager:
 
     # ---------- data access (thread-safe) ----------
 
-    def _run_coro(self, coro, default=None):
+    def _run_coro(self, coro, default=None, timeout=10):
         if not (self.loop and self.client and self.status == "online"):
             coro.close()  # avoid "coroutine was never awaited" — it's already built, just unused
             return default
         future = asyncio.run_coroutine_threadsafe(coro, self.loop)
         try:
-            return future.result(timeout=10)
+            return future.result(timeout=timeout)
         except Exception:
             return default
 
@@ -205,6 +206,31 @@ class BotManager:
 
         applied_live = bool(self._run_coro(_set(), default=None))
         return {"ok": True, "applied_live": applied_live}
+
+    # ---------- server backup / restore (web UI only) ----------
+
+    def save_backup(self, guild_id: str) -> dict:
+        async def _save():
+            guild = self.client.get_guild(int(guild_id))
+            if not guild:
+                return {"ok": False, "error": "Server not found — is the bot still in it?"}
+            return await bot_backup.save_backup(guild)
+
+        result = self._run_coro(_save(), default=None, timeout=60)
+        return result or {"ok": False, "error": "Bot isn't connected."}
+
+    def load_backup(self, guild_id: str, backup_id: str, mode: str) -> dict:
+        async def _load():
+            guild = self.client.get_guild(int(guild_id))
+            if not guild:
+                return {"ok": False, "error": "Server not found — is the bot still in it?"}
+            perms = guild.me.guild_permissions
+            if not (perms.manage_roles and perms.manage_channels):
+                return {"ok": False, "error": "I need Manage Roles and Manage Channels permission in that server."}
+            return await bot_backup.load_backup(guild, backup_id, mode)
+
+        result = self._run_coro(_load(), default=None, timeout=180)
+        return result or {"ok": False, "error": "Bot isn't connected."}
 
 
 def _parse_color(value) -> "discord.Color":
