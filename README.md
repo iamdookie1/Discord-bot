@@ -12,9 +12,10 @@ local web UI at `http://127.0.0.1:5000` instead of the command line.
 - `bot_commands.py` — utility + moderation `!commands`, on/off toggle storage, per-user command cooldowns, and the custom-command sandbox
 - `bot_music.py` — the `!join`/`!play`/`!menu`/... voice commands, the interactive now-playing menu, and playback state
 - `bot_rp.py` — the `!kiss`/`!hug`/... roleplay commands and their GIF storage
-- `templates/`, `static/` — the UI (Home, Text, Bot, Cmds, Custom, RP tabs)
+- `bot_backup.py` — server structure snapshot/restore for the Backup tab (web UI only, no chat command)
+- `templates/`, `static/` — the UI (Home, Text, Bot, Cmds, Custom, RP, Backup tabs)
 - `config.json` — created automatically the first time you save a token or set a presence (kept only on your device)
-- `custom_commands.json`, `command_settings.json`, `rp_commands.json`, `warnings.json` — created automatically as you use the Custom/Cmds/RP tabs (all kept only on your device, none of it committed to git)
+- `custom_commands.json`, `command_settings.json`, `rp_commands.json`, `warnings.json`, `server_backups.json` — created automatically as you use the Custom/Cmds/RP/Backup tabs (all kept only on your device, none of it committed to git)
 
 ## First-time setup (in Termux)
 
@@ -88,6 +89,14 @@ Open `http://127.0.0.1:5000` in your phone's browser.
 - Action commands like `!kiss @user` and `!hug @user` — ten are built in (`kiss`, `hug`, `slap`, `pat`, `cuddle`, `poke`, `bonk`, `highfive`, `tickle`, `wave`), and **New custom RP command** lets you add more by name.
 - Every one of them, built-in or custom, needs GIFs added before it'll do anything — hit **Edit gifs** on any command (including the built-in ones) to set up to 5 GIF URLs. Empty slots are ignored, extras past 5 are ignored, and the bot picks one at random each time the command runs. If none are set yet, using the command sends an error telling you to add some instead of failing silently.
 - Each RP command has its own on/off toggle too; only custom ones can be deleted outright (built-ins can only be toggled off).
+
+**Backup tab** — web UI only, nothing here is a chat command:
+- Pick a **server**, hit **Save backup** to snapshot its roles, categories, and channels (names, colors/permissions, per-role permission overwrites, channel type/topic/slowmode/bitrate/etc). Message history, pins, threads, and anything else *inside* a channel is never captured.
+- Pick a saved backup from the **Backup to load** dropdown, pick a **server** (can be the same one or a totally different one), and hit **Load into selected server**. Two load modes:
+  - **Additive** (default) — only creates roles/categories/channels from the backup, never touches or deletes anything already in the target server. Loading the same backup twice will create duplicates.
+  - **Full wipe and replace** — deletes every existing channel and role in the target server first, then recreates the backup exactly. Irreversible, so the button asks for an explicit confirmation before doing anything.
+- The bot needs **Manage Roles** and **Manage Channels** permission in the target server for either mode to work.
+- Large servers can take a while to save/restore — Discord rate-limits how fast channels and roles can be created, so this isn't instant.
 
 ## Getting a bot token
 

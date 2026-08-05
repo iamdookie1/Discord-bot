@@ -3,6 +3,7 @@ custom_commands.json
 command_settings.json
 rp_commands.json
 warnings.json
+server_backups.json
 __pycache__/
 *.pyc
 .venv/

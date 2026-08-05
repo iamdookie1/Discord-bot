@@ -50,6 +50,11 @@
       <span>RP</span>
     </button>
 
+    <button class="rail-tab" data-tab="backup">
+      <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M4 4h16a1 1 0 0 1 1 1v3H3V5a1 1 0 0 1 1-1Zm-1 6h18v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-9Zm7 3v2h4v-2h-4Z"/></svg>
+      <span>Backup</span>
+    </button>
+
     <div class="rail-spacer"></div>
 
     <div class="rail-footer">termux &middot; local</div>
@@ -403,6 +408,54 @@
           <button class="btn-primary" id="createRpCmdBtn">Create RP command</button>
         </div>
         <p class="form-msg" id="rpCreateMsg"></p>
+      </div>
+    </section>
+
+    <!-- ===== Backup tab (web UI only, no chat command) ===== -->
+    <section class="panel" id="tab-backup">
+      <header class="panel-head">
+        <h1>Backup</h1>
+        <p>Save a server's roles, categories, and channels &mdash; load that structure into any server.</p>
+      </header>
+
+      <div class="card card-quiet">
+        <p>Backs up channel/category structure, permission overwrites, and role names/colors/permissions. Message history, pins, and everything else <em>inside</em> a channel is never included.</p>
+      </div>
+
+      <div class="card">
+        <label class="field-label" for="backupServerSelect">Server</label>
+        <select id="backupServerSelect" class="field-input">
+          <option value="">Connect the bot first&hellip;</option>
+        </select>
+
+        <div class="btn-row">
+          <button class="btn-primary" id="saveBackupBtn">Save backup</button>
+        </div>
+        <p class="form-msg" id="saveBackupMsg"></p>
+      </div>
+
+      <div class="card">
+        <label class="field-label" for="backupSelect">Backup to load</label>
+        <select id="backupSelect" class="field-input">
+          <option value="">No backups saved yet&hellip;</option>
+        </select>
+
+        <label class="field-label" for="loadModeSelect">Load mode</label>
+        <select id="loadModeSelect" class="field-input">
+          <option value="additive">Additive &mdash; only creates, never touches what's already there</option>
+          <option value="replace">Full wipe and replace &mdash; deletes ALL current channels/roles first</option>
+        </select>
+
+        <div class="btn-row">
+          <button class="btn-primary" id="loadBackupBtn">Load into selected server</button>
+        </div>
+        <p class="form-msg" id="loadBackupMsg"></p>
+      </div>
+
+      <div class="card">
+        <h2 class="card-title">Saved backups</h2>
+        <div class="cmd-list" id="backupList"></div>
+        <p class="field-hint" id="backupListEmpty">No backups yet.</p>
       </div>
     </section>
 

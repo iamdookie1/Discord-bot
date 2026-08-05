@@ -22,6 +22,10 @@ tabs.forEach((tab) => {
     if (tab.dataset.tab === "cmds") loadBuiltinCommands();
     if (tab.dataset.tab === "customcmds") loadCustomCommands();
     if (tab.dataset.tab === "rp") loadRpCommands();
+    if (tab.dataset.tab === "backup") {
+      refreshBackupServers();
+      loadBackupList();
+    }
   });
 });
 
@@ -929,6 +933,140 @@ createRpCmdBtn.addEventListener("click", async () => {
     loadRpCommands();
   } else {
     setMsg(rpCreateMsg, data.error || "Couldn't create that command.", "error");
+  }
+});
+
+// ---------- backup tab (web UI only) ----------
+
+const backupServerSelect = document.getElementById("backupServerSelect");
+const saveBackupBtn = document.getElementById("saveBackupBtn");
+const saveBackupMsg = document.getElementById("saveBackupMsg");
+const backupSelect = document.getElementById("backupSelect");
+const loadModeSelect = document.getElementById("loadModeSelect");
+const loadBackupBtn = document.getElementById("loadBackupBtn");
+const loadBackupMsg = document.getElementById("loadBackupMsg");
+const backupList = document.getElementById("backupList");
+const backupListEmpty = document.getElementById("backupListEmpty");
+
+async function refreshBackupServers() {
+  const guilds = await api("/api/guilds");
+  const current = backupServerSelect.value;
+  if (!guilds.length) {
+    backupServerSelect.innerHTML = '<option value="">No servers found (is the bot online + invited?)</option>';
+    return;
+  }
+  backupServerSelect.innerHTML =
+    '<option value="">Choose a server&hellip;</option>' +
+    guilds.map((g) => `<option value="${g.id}">${escapeHtml(g.name)}</option>`).join("");
+  if (current) backupServerSelect.value = current;
+}
+
+async function loadBackupList() {
+  const backups = await api("/api/backups");
+  backupListEmpty.style.display = backups.length ? "none" : "block";
+
+  const currentSelection = backupSelect.value;
+  backupSelect.innerHTML = backups.length
+    ? backups.map((b) => `<option value="${b.id}">${escapeHtml(b.name)} (${b.role_count} roles, ${b.channel_count} channels)</option>`).join("")
+    : '<option value="">No backups saved yet&hellip;</option>';
+  if (currentSelection) backupSelect.value = currentSelection;
+
+  backupList.innerHTML = "";
+  backups.forEach((b) => {
+    const item = document.createElement("div");
+    item.className = "custom-cmd-item";
+
+    const info = document.createElement("div");
+    info.className = "cmd-info";
+    info.innerHTML = `
+      <span class="cmd-name mono">${escapeHtml(b.name)}</span>
+      <span class="cmd-desc">from ${escapeHtml(b.guild_name)} &middot; ${b.role_count} roles, ${b.category_count} categories, ${b.channel_count} channels</span>
+    `;
+    item.appendChild(info);
+
+    const actions = document.createElement("div");
+    actions.className = "custom-cmd-actions";
+    const delBtn = document.createElement("button");
+    delBtn.type = "button";
+    delBtn.className = "btn-ghost btn-small";
+    delBtn.textContent = "Delete";
+    delBtn.addEventListener("click", async () => {
+      delBtn.disabled = true;
+      await api(`/api/backups/${encodeURIComponent(b.id)}`, { method: "DELETE" });
+      loadBackupList();
+    });
+    actions.appendChild(delBtn);
+    item.appendChild(actions);
+
+    backupList.appendChild(item);
+  });
+}
+
+saveBackupBtn.addEventListener("click", async () => {
+  const guildId = backupServerSelect.value;
+  if (!guildId) {
+    setMsg(saveBackupMsg, "Pick a server first.", "error");
+    return;
+  }
+  saveBackupBtn.disabled = true;
+  setMsg(saveBackupMsg, "Saving — this can take a moment for large servers...", "");
+  const data = await api("/api/backups", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ guild_id: guildId }),
+  });
+  saveBackupBtn.disabled = false;
+
+  if (data.ok) {
+    setMsg(saveBackupMsg, `Saved: ${data.roles} roles, ${data.categories} categories, ${data.channels} channels.`, "success");
+    loadBackupList();
+  } else {
+    setMsg(saveBackupMsg, data.error || "Couldn't save that backup.", "error");
+  }
+});
+
+loadBackupBtn.addEventListener("click", async () => {
+  const guildId = backupServerSelect.value;
+  const backupId = backupSelect.value;
+  const mode = loadModeSelect.value;
+
+  if (!guildId) {
+    setMsg(loadBackupMsg, "Pick a server first.", "error");
+    return;
+  }
+  if (!backupId) {
+    setMsg(loadBackupMsg, "Pick a backup to load.", "error");
+    return;
+  }
+
+  if (mode === "replace") {
+    const sure = window.confirm(
+      "This deletes EVERY channel and role currently in the selected server, then recreates the backup. " +
+      "This cannot be undone. Continue?"
+    );
+    if (!sure) return;
+  }
+
+  loadBackupBtn.disabled = true;
+  setMsg(loadBackupMsg, "Loading — this can take a while for large backups...", "");
+  const data = await api(`/api/backups/${encodeURIComponent(backupId)}/load`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ guild_id: guildId, mode, confirm: mode === "replace" }),
+  });
+  loadBackupBtn.disabled = false;
+
+  if (data.ok) {
+    let msg = `Created ${data.created_roles} roles, ${data.created_categories} categories, ${data.created_channels} channels.`;
+    if (data.deleted_roles || data.deleted_channels) {
+      msg += ` Deleted ${data.deleted_roles} roles and ${data.deleted_channels} channels first.`;
+    }
+    if (data.errors && data.errors.length) {
+      msg += ` ${data.errors.length} error(s) — check the bot's Manage Roles/Manage Channels permission.`;
+    }
+    setMsg(loadBackupMsg, msg, data.errors && data.errors.length ? "error" : "success");
+  } else {
+    setMsg(loadBackupMsg, data.error || "Couldn't load that backup.", "error");
   }
 });
 
