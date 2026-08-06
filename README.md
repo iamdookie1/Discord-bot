@@ -13,7 +13,6 @@ local web UI at `http://127.0.0.1:5000` instead of the command line.
 - `bot_music.py` — the `!join`/`!play`/`!menu`/... voice commands, the interactive now-playing menu, and playback state
 - `bot_rp.py` — the `!kiss`/`!hug`/... roleplay commands and their GIF storage
 - `bot_backup.py` — server structure snapshot/restore for the Backup tab (web UI only, no chat command)
-- `bot_nsfw.py` — the owner-ID + nsfw-channel gate `!reddit` uses for anything Reddit flags as over_18
 - `templates/`, `static/` — the UI (Home, Text, Bot, Cmds, Custom, RP, Backup tabs)
 - `config.json` — created automatically the first time you save a token or set a presence (kept only on your device)
 - `custom_commands.json`, `command_settings.json`, `rp_commands.json`, `warnings.json`, `server_backups.json` — created automatically as you use the Custom/Cmds/RP/Backup tabs (all kept only on your device, none of it committed to git)
@@ -67,13 +66,11 @@ Open `http://127.0.0.1:5000` in your phone's browser.
 - **Presence**: set what shows under the bot's name in the member list (Playing/Watching/Listening to/Competing in + text). Saved and reapplied automatically every time the bot connects.
 
 **Cmds tab** — 40+ built-in commands across three categories, each with an on/off toggle, plus a search box to find one quickly:
-- **Utility** (17): `!ping`, `!cmds`/`!help`, `!uptime`, `!avatar`, `!userinfo`, `!serverinfo`, `!say` (also deletes your original message), `!coinflip`, `!roll`, `!8ball`, `!time`, `!calc`, `!choose`, `!reverse`, `!remind`, `!reddit <subreddit>` (see below)
+- **Utility** (16): `!ping`, `!cmds`/`!help`, `!uptime`, `!avatar`, `!userinfo`, `!serverinfo`, `!say` (also deletes your original message), `!coinflip`, `!roll`, `!8ball`, `!time`, `!calc`, `!choose`, `!reverse`, `!remind`
 - **Moderation** (16): `!kick`, `!ban`, `!softban`, `!unban`, `!timeout`, `!untimeout`, `!warn`, `!warnings`, `!clearwarnings`, `!purge`, `!slowmode`, `!lock`, `!unlock`, `!nick`, `!addrole`, `!removerole` — every one of these checks the caller has the matching Discord permission (and that the bot does too) before running anything, and refuses with a clear message if not
 - **Music** (9): `!join`, `!leave`, `!play`, `!menu`, `!pause`, `!resume`, `!skip`, `!stop`, `!queue` — needs the `ffmpeg` binary, `PyNaCl` (voice encryption), and `davey` (Discord's now-mandatory DAVE end-to-end voice encryption, required since March 2026); `setup.sh` tries to install all of it automatically on Termux, but if any piece is missing `!play` tells you instead of failing silently. `!play` (and `!menu`) show an interactive now-playing menu — see below.
 - **Requires "Message Content Intent" turned on** for your bot in the Developer Portal (**Bot** page) — without it, discord.py can't read what people type, so no `!command` will ever trigger. This is separate from the token and has to be flipped on manually per-bot.
 - Every command, of every kind (built-in, RP, custom), has a 3-second per-user cooldown — spamming one just gets silently ignored until the cooldown clears.
-
-**`!reddit <subreddit>`** — pulls a random post from that subreddit via Reddit's public JSON API (no scraping, no third-party content APIs). It's a normal command for normal subreddits, usable by anyone in any channel. If the subreddit itself is flagged NSFW by Reddit (or an individual post is, even in an otherwise SFW subreddit), the same two-part gate as before applies: only Discord user ID `1409771422011887678` can see it (anyone else gets total silence, not an error), and only inside a channel Discord itself has marked NSFW (an explicit refusal otherwise). This app never sources or ships content itself — it only ever reflects back whatever Reddit already flagged and whatever subreddit you asked for.
 
 **The music menu** — `!play` posts (and reuses) one message per voice session with:
 - A progress bar, elapsed/total time, and volume/loop status, refreshed live
