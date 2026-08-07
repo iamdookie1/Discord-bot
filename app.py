@@ -429,14 +429,16 @@ def rp_commands_create():
     return jsonify({"ok": True})
 
 
-@app.route("/api/rp/commands/<name>/gifs", methods=["POST"])
-def rp_commands_gifs(name):
+@app.route("/api/rp/commands/<name>/content", methods=["POST"])
+def rp_commands_content(name):
     data = request.get_json(force=True, silent=True) or {}
     gifs = data.get("gifs") or []
+    messages = data.get("messages") or []
     name = name.strip().lower()
     if not bot_rp.has_command(name):
         return jsonify({"ok": False, "error": "Unknown RP command."}), 404
     bot_rp.set_gifs(name, gifs)
+    bot_rp.set_messages(name, messages)
     return jsonify({"ok": True})
 
 

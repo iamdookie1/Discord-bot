@@ -595,6 +595,7 @@ clearPresenceBtn.addEventListener("click", () => {
 // ---------- cmds tab ----------
 
 const utilityCmdList = document.getElementById("utilityCmdList");
+const funCmdList = document.getElementById("funCmdList");
 const moderationCmdList = document.getElementById("moderationCmdList");
 const musicCmdList = document.getElementById("musicCmdList");
 
@@ -644,7 +645,7 @@ function renderBuiltinCmdItem(c) {
 
 async function loadBuiltinCommands() {
   const cmds = await api("/api/commands/builtin");
-  const byCategory = { utility: [], moderation: [], music: [] };
+  const byCategory = { utility: [], fun: [], moderation: [], music: [] };
   cmds.forEach((c) => { (byCategory[c.category] || byCategory.utility).push(c); });
 
   const fill = (el, list) => {
@@ -652,6 +653,7 @@ async function loadBuiltinCommands() {
     list.sort((a, b) => a.name.localeCompare(b.name)).forEach((c) => el.appendChild(renderBuiltinCmdItem(c)));
   };
   fill(utilityCmdList, byCategory.utility);
+  fill(funCmdList, byCategory.fun);
   fill(moderationCmdList, byCategory.moderation);
   fill(musicCmdList, byCategory.music);
   filterBuiltinCommands();
@@ -800,7 +802,8 @@ const rpCmdDescription = document.getElementById("rpCmdDescription");
 const createRpCmdBtn = document.getElementById("createRpCmdBtn");
 const rpCreateMsg = document.getElementById("rpCreateMsg");
 
-const MAX_RP_GIFS = 5;
+const MAX_RP_GIFS = 10;
+const MAX_RP_MESSAGES = 10;
 
 function renderRpCmdItem(c) {
   const item = document.createElement("div");
@@ -820,9 +823,10 @@ function renderRpCmdItem(c) {
   const info = document.createElement("div");
   info.className = "cmd-info";
   const gifCount = c.gifs.length ? `${c.gifs.length} gif${c.gifs.length === 1 ? "" : "s"}` : "no gifs yet";
+  const msgCount = c.messages.length ? `${c.messages.length} msg${c.messages.length === 1 ? "" : "s"}` : "default msg";
   info.innerHTML = `
     <span class="cmd-name mono">!${escapeHtml(c.name)}</span>
-    <span class="cmd-desc">${escapeHtml(c.description || "")} &middot; ${gifCount}</span>
+    <span class="cmd-desc">${escapeHtml(c.description || "")} &middot; ${gifCount} &middot; ${msgCount}</span>
   `;
   row.appendChild(info);
 
@@ -832,7 +836,7 @@ function renderRpCmdItem(c) {
   const editBtn = document.createElement("button");
   editBtn.type = "button";
   editBtn.className = "btn-outline btn-small";
-  editBtn.textContent = "Edit gifs";
+  editBtn.textContent = "Edit";
   actions.appendChild(editBtn);
 
   if (c.custom) {
@@ -855,6 +859,11 @@ function renderRpCmdItem(c) {
   editor.className = "rp-gif-editor";
   editor.style.display = "none";
 
+  const gifLabel = document.createElement("label");
+  gifLabel.className = "field-label";
+  gifLabel.textContent = `GIFs (up to ${MAX_RP_GIFS})`;
+  editor.appendChild(gifLabel);
+
   const gifInputs = [];
   for (let i = 0; i < MAX_RP_GIFS; i++) {
     const input = document.createElement("input");
@@ -866,6 +875,28 @@ function renderRpCmdItem(c) {
     editor.appendChild(input);
   }
 
+  const msgLabel = document.createElement("label");
+  msgLabel.className = "field-label";
+  msgLabel.textContent = `Messages (up to ${MAX_RP_MESSAGES}, optional)`;
+  editor.appendChild(msgLabel);
+
+  const msgHint = document.createElement("p");
+  msgHint.className = "field-hint";
+  msgHint.style.marginTop = "0";
+  msgHint.textContent = "Use {author} and {target} as placeholders. Leave all blank to use the default phrasing.";
+  editor.appendChild(msgHint);
+
+  const messageInputs = [];
+  for (let i = 0; i < MAX_RP_MESSAGES; i++) {
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "field-input rp-gif-input";
+    input.placeholder = `Message ${i + 1}`;
+    input.value = c.messages[i] || "";
+    messageInputs.push(input);
+    editor.appendChild(input);
+  }
+
   const editorMsg = document.createElement("p");
   editorMsg.className = "form-msg";
 
@@ -874,14 +905,15 @@ function renderRpCmdItem(c) {
   const saveBtn = document.createElement("button");
   saveBtn.type = "button";
   saveBtn.className = "btn-primary btn-small";
-  saveBtn.textContent = "Save GIFs";
+  saveBtn.textContent = "Save";
   saveBtn.addEventListener("click", async () => {
     saveBtn.disabled = true;
     const gifs = gifInputs.map((inp) => inp.value.trim());
-    const data = await api(`/api/rp/commands/${encodeURIComponent(c.name)}/gifs`, {
+    const messages = messageInputs.map((inp) => inp.value.trim());
+    const data = await api(`/api/rp/commands/${encodeURIComponent(c.name)}/content`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ gifs }),
+      body: JSON.stringify({ gifs, messages }),
     });
     saveBtn.disabled = false;
     if (data.ok) {
