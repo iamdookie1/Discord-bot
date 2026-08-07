@@ -25,6 +25,7 @@ import operator
 import os
 import random
 import re
+import secrets
 import statistics
 import string
 import subprocess
@@ -298,6 +299,155 @@ async def _cmd_remind(ctx: Ctx):
     asyncio.create_task(_fire())
 
 
+async def _cmd_password(ctx: Ctx):
+    length = 16
+    if ctx.args:
+        try:
+            length = int(ctx.args[0])
+        except ValueError:
+            await ctx.send("Usage: `!password [length]` (default 16, max 64)")
+            return
+    length = max(4, min(length, 64))
+    alphabet = string.ascii_letters + string.digits + "!@#$%^&*()-_=+"
+    pwd = "".join(secrets.choice(alphabet) for _ in range(length))
+    await ctx.send(f"||`{pwd}`||")
+
+
+async def _cmd_uuid(ctx: Ctx):
+    await ctx.send(f"`{uuid.uuid4()}`")
+
+
+async def _cmd_base64(ctx: Ctx):
+    if len(ctx.args) < 2:
+        await ctx.send("Usage: `!base64 <encode|decode> <text>`")
+        return
+    mode = ctx.args[0].lower()
+    text = " ".join(ctx.args[1:])
+    try:
+        if mode == "encode":
+            result = base64.b64encode(text.encode()).decode()
+        elif mode == "decode":
+            result = base64.b64decode(text.encode()).decode()
+        else:
+            await ctx.send("Usage: `!base64 <encode|decode> <text>`")
+            return
+    except Exception:
+        await ctx.send("Couldn't do that — is it valid base64?")
+        return
+    await ctx.send(f"`{result}`")
+
+
+async def _cmd_hash(ctx: Ctx):
+    if not ctx.content:
+        await ctx.send("Usage: `!hash <text>`")
+        return
+    await ctx.send(f"`{hashlib.sha256(ctx.content.encode()).hexdigest()}`")
+
+
+async def _cmd_color(ctx: Ctx):
+    if not ctx.args:
+        await ctx.send("Usage: `!color <hex>`, e.g. `!color #ff8800`")
+        return
+    hex_str = ctx.args[0].lstrip("#")
+    try:
+        color_val = int(hex_str, 16)
+        if not (0 <= color_val <= 0xFFFFFF):
+            raise ValueError
+    except ValueError:
+        await ctx.send("That doesn't look like a valid hex color, e.g. `#ff8800`.")
+        return
+    embed = discord.Embed(color=discord.Color(color_val), description=f"`#{hex_str.upper()}`")
+    await ctx.send(embed=embed)
+
+
+async def _cmd_timestamp(ctx: Ctx):
+    if ctx.args:
+        try:
+            ts = int(ctx.args[0])
+        except ValueError:
+            await ctx.send("Usage: `!timestamp [unix_seconds]` (omit for right now)")
+            return
+    else:
+        ts = int(time.time())
+    await ctx.send(f"`{ts}` → <t:{ts}:F> (<t:{ts}:R>)")
+
+
+async def _cmd_invite(ctx: Ctx):
+    perms = discord.Permissions(
+        send_messages=True, manage_messages=True, manage_roles=True, manage_channels=True,
+        manage_nicknames=True, moderate_members=True, kick_members=True, ban_members=True,
+        connect=True, speak=True, read_message_history=True, embed_links=True, attach_files=True,
+        add_reactions=True, view_channel=True, use_external_emojis=True,
+    )
+    url = discord.utils.oauth_url(ctx.client.user.id, permissions=perms)
+    await ctx.send(f"Invite me to a server: {url}")
+
+
+_POLL_NUMBER_EMOJIS = ["1\N{combining enclosing keycap}", "2\N{combining enclosing keycap}", "3\N{combining enclosing keycap}",
+                       "4\N{combining enclosing keycap}", "5\N{combining enclosing keycap}", "6\N{combining enclosing keycap}",
+                       "7\N{combining enclosing keycap}", "8\N{combining enclosing keycap}", "9\N{combining enclosing keycap}", "\U0001F51F"]
+
+
+async def _cmd_poll(ctx: Ctx):
+    if not ctx.content or "|" not in ctx.content:
+        await ctx.send("Usage: `!poll Question? | Option 1 | Option 2 | ...` (up to 10 options)")
+        return
+    parts = [p.strip() for p in ctx.content.split("|") if p.strip()]
+    if len(parts) < 3:
+        await ctx.send("Usage: `!poll Question? | Option 1 | Option 2 | ...` (need a question and at least 2 options)")
+        return
+    question, options = parts[0], parts[1:11]
+    lines = [f"{_POLL_NUMBER_EMOJIS[i]} {opt}" for i, opt in enumerate(options)]
+    embed = discord.Embed(title=question, description="\n".join(lines), color=discord.Color.blurple())
+    msg = await ctx.send(embed=embed)
+    for i in range(len(options)):
+        try:
+            await msg.add_reaction(_POLL_NUMBER_EMOJIS[i])
+        except discord.HTTPException:
+            pass
+
+
+async def _cmd_channelinfo(ctx: Ctx):
+    ch = ctx.channel
+    lines = [f"**#{getattr(ch, 'name', 'this channel')}**", f"ID: `{ch.id}`", f"Type: `{ch.type}`"]
+    if getattr(ch, "topic", None):
+        lines.append(f"Topic: {ch.topic}")
+    if hasattr(ch, "nsfw"):
+        lines.append(f"NSFW: `{ch.nsfw}`")
+    if hasattr(ch, "slowmode_delay"):
+        lines.append(f"Slowmode: `{ch.slowmode_delay}s`")
+    await ctx.send("\n".join(lines))
+
+
+async def _cmd_roleinfo(ctx: Ctx):
+    if not ctx.guild:
+        await ctx.send("This only works in a server.")
+        return
+    role = ctx.message.role_mentions[0] if ctx.message.role_mentions else _resolve_role(ctx, ctx.content)
+    if not role:
+        await ctx.send("Usage: `!roleinfo <role name or @role>`")
+        return
+    lines = [
+        f"**{role.name}**",
+        f"ID: `{role.id}`",
+        f"Color: `{role.color}`",
+        f"Members: `{len(role.members)}`",
+        f"Mentionable: `{role.mentionable}`",
+        f"Hoisted: `{role.hoist}`",
+    ]
+    await ctx.send("\n".join(lines))
+
+
+async def _cmd_permissions(ctx: Ctx):
+    if not ctx.guild:
+        await ctx.send("This only works in a server.")
+        return
+    target = ctx.message.mentions[0] if ctx.message.mentions else ctx.author
+    granted = [name.replace("_", " ").title() for name, value in target.guild_permissions if value]
+    text = ", ".join(granted[:20]) or "None"
+    await ctx.send(f"**{target}**'s key permissions: {text}")
+
+
 UTILITY_COMMANDS = {
     "ping": CommandSpec("Checks the bot's latency to Discord.", _cmd_ping, None, "utility"),
     "cmds": CommandSpec("Lists every available command.", _cmd_cmds, None, "utility"),
@@ -315,6 +465,232 @@ UTILITY_COMMANDS = {
     "choose": CommandSpec("Picks one option from a | separated list.", _cmd_choose, None, "utility"),
     "reverse": CommandSpec("Reverses your text.", _cmd_reverse, None, "utility"),
     "remind": CommandSpec("Reminds you in the channel after N minutes.", _cmd_remind, None, "utility"),
+    "password": CommandSpec("Generates a random password.", _cmd_password, None, "utility"),
+    "uuid": CommandSpec("Generates a random UUID.", _cmd_uuid, None, "utility"),
+    "base64": CommandSpec("Encodes/decodes text as base64.", _cmd_base64, None, "utility"),
+    "hash": CommandSpec("SHA-256 hashes some text.", _cmd_hash, None, "utility"),
+    "color": CommandSpec("Shows a color swatch for a hex code.", _cmd_color, None, "utility"),
+    "timestamp": CommandSpec("Converts a unix timestamp to a Discord date/time tag.", _cmd_timestamp, None, "utility"),
+    "invite": CommandSpec("Gives you a link to invite this bot to another server.", _cmd_invite, None, "utility"),
+    "poll": CommandSpec("Posts a quick reaction poll.", _cmd_poll, None, "utility"),
+    "channelinfo": CommandSpec("Shows info about the current channel.", _cmd_channelinfo, None, "utility"),
+    "roleinfo": CommandSpec("Shows info about a role.", _cmd_roleinfo, None, "utility"),
+    "permissions": CommandSpec("Shows your (or @mention's) key permissions.", _cmd_permissions, None, "utility"),
+}
+
+
+# ==================== fun commands ====================
+
+_JOKES = [
+    "Why don't scientists trust atoms? Because they make up everything.",
+    "I told my computer I needed a break, and it said no problem — it'll go to sleep.",
+    "Why do programmers prefer dark mode? Because light attracts bugs.",
+    "How many programmers does it take to change a light bulb? None — that's a hardware problem.",
+    "Why did the developer go broke? Because he used up all his cache.",
+    "I would tell you a UDP joke, but you might not get it.",
+    "There are 10 types of people in the world: those who understand binary and those who don't.",
+    "Why do Java developers wear glasses? Because they don't C#.",
+    "A SQL query walks into a bar, walks up to two tables, and asks: 'Can I join you?'",
+    "Debugging is being the detective in a crime movie where you're also the murderer.",
+]
+
+_FACTS = [
+    "Honey never spoils — archaeologists have found 3,000-year-old honey that's still edible.",
+    "A group of flamingos is called a 'flamboyance.'",
+    "Octopuses have three hearts and blue blood.",
+    "Bananas are berries, but strawberries aren't.",
+    "The Eiffel Tower can grow about 6 inches taller in summer heat.",
+    "A day on Venus is longer than a year on Venus.",
+    "Wombat poop is cube-shaped.",
+    "There are more possible chess games than atoms in the observable universe.",
+    "Sharks existed before trees.",
+    "The shortest war in recorded history lasted about 38 minutes.",
+]
+
+_FORTUNES = [
+    "A pleasant surprise is waiting for you.",
+    "Now is the time to try something new.",
+    "Your hard work is about to pay off.",
+    "A journey of a thousand miles begins with a single step.",
+    "Good things come to those who debug.",
+    "The best time to plant a tree was 20 years ago. The second best time is now.",
+    "An exciting opportunity lies ahead of you.",
+    "Patience is bitter, but its fruit is sweet.",
+]
+
+_WOULD_YOU_RATHER = [
+    "...have the ability to fly, or be invisible?",
+    "...always be 10 minutes late, or always be 20 minutes early?",
+    "...fight one horse-sized duck, or a hundred duck-sized horses?",
+    "...never use social media again, or never watch another movie/show again?",
+    "...be able to speak every language, or play every instrument?",
+    "...have unlimited money, or unlimited time?",
+    "...live without music, or live without TV/movies?",
+    "...always say everything on your mind, or never speak again?",
+]
+
+_TRIVIA = [
+    ("What planet is known as the Red Planet?", "Mars"),
+    ("What's the largest mammal in the world?", "The blue whale"),
+    ("How many continents are there?", "Seven"),
+    ("What's the smallest prime number?", "2"),
+    ("What language has the most native speakers?", "Mandarin Chinese"),
+    ("What year did the Titanic sink?", "1912"),
+    ("What's the hardest natural substance on Earth?", "Diamond"),
+    ("How many bones are in the adult human body?", "206"),
+]
+
+
+async def _cmd_joke(ctx: Ctx):
+    await ctx.send(random.choice(_JOKES))
+
+
+async def _cmd_fact(ctx: Ctx):
+    await ctx.send(f"🧠 {random.choice(_FACTS)}")
+
+
+async def _cmd_fortune(ctx: Ctx):
+    await ctx.send(f"🥠 {random.choice(_FORTUNES)}")
+
+
+async def _cmd_would(ctx: Ctx):
+    await ctx.send(f"Would you rather{random.choice(_WOULD_YOU_RATHER)}")
+
+
+async def _cmd_trivia(ctx: Ctx):
+    q, a = random.choice(_TRIVIA)
+    await ctx.send(f"❓ {q}\n||{a}||")
+
+
+_RPS_CHOICES = {"rock": "🪨", "paper": "📄", "scissors": "✂️"}
+_RPS_BEATS = {"rock": "scissors", "paper": "rock", "scissors": "paper"}
+
+
+async def _cmd_rps(ctx: Ctx):
+    if not ctx.args or ctx.args[0].lower() not in _RPS_CHOICES:
+        await ctx.send("Usage: `!rps <rock|paper|scissors>`")
+        return
+    player = ctx.args[0].lower()
+    bot_choice = random.choice(list(_RPS_CHOICES))
+    if player == bot_choice:
+        result = "It's a tie!"
+    elif _RPS_BEATS[player] == bot_choice:
+        result = "You win!"
+    else:
+        result = "I win!"
+    await ctx.send(f"You: {_RPS_CHOICES[player]}  Me: {_RPS_CHOICES[bot_choice]} — {result}")
+
+
+async def _cmd_ship(ctx: Ctx):
+    if len(ctx.args) < 2:
+        await ctx.send("Usage: `!ship <name1> <name2>`")
+        return
+    name1, name2 = ctx.args[0], ctx.args[1]
+    digest = hashlib.md5(f"{name1.lower()}{name2.lower()}".encode()).hexdigest()
+    pct = int(digest, 16) % 101
+    bar = "█" * (pct // 10) + "░" * (10 - pct // 10)
+    await ctx.send(f"💘 **{name1}** + **{name2}** = **{pct}%**\n`{bar}`")
+
+
+async def _cmd_mock(ctx: Ctx):
+    if not ctx.content:
+        await ctx.send("Usage: `!mock <text>`")
+        return
+    await ctx.send("".join(c.upper() if i % 2 else c.lower() for i, c in enumerate(ctx.content)))
+
+
+async def _cmd_clap(ctx: Ctx):
+    if not ctx.content:
+        await ctx.send("Usage: `!clap <text>`")
+        return
+    await ctx.send(" 👏 ".join(ctx.content.split()))
+
+
+_REGIONAL_LETTERS = {chr(c): chr(0x1F1E6 + c - ord("a")) for c in range(ord("a"), ord("z") + 1)}
+_DIGIT_NAMES = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"]
+
+
+async def _cmd_bigtext(ctx: Ctx):
+    if not ctx.content:
+        await ctx.send("Usage: `!bigtext <text>`")
+        return
+    out = []
+    for ch in ctx.content.lower()[:20]:
+        if ch in _REGIONAL_LETTERS:
+            out.append(_REGIONAL_LETTERS[ch])
+        elif ch == " ":
+            out.append("   ")
+        elif ch.isdigit():
+            out.append(f":{_DIGIT_NAMES[int(ch)]}:")
+        else:
+            out.append(ch)
+    await ctx.send(" ".join(out))
+
+
+async def _cmd_hack(ctx: Ctx):
+    target = ctx.message.mentions[0] if ctx.message.mentions else None
+    name = target.display_name if target else (ctx.content or "the mainframe")
+    steps = [
+        f"Initializing exploit against **{name}**...",
+        "Bypassing firewall... ✅",
+        "Cracking password hash... ✅",
+        "Accessing mainframe... ✅",
+        f"🎉 Successfully hacked **{name}**! (relax, this is just a joke)",
+    ]
+    await ctx.send("\n".join(steps))
+
+
+async def _cmd_rate(ctx: Ctx):
+    if not ctx.content:
+        await ctx.send("Usage: `!rate <thing>`")
+        return
+    digest = hashlib.md5(ctx.content.lower().encode()).hexdigest()
+    score = int(digest, 16) % 11
+    await ctx.send(f"I'd rate **{ctx.content}** a **{score}/10**.")
+
+
+async def _cmd_binary(ctx: Ctx):
+    if not ctx.content:
+        await ctx.send("Usage: `!binary <text>`")
+        return
+    binary = " ".join(format(ord(c), "08b") for c in ctx.content[:100])
+    if len(binary) > 1900:
+        binary = binary[:1900] + "..."
+    await ctx.send(f"`{binary}`")
+
+
+_MORSE_TABLE = {
+    "a": ".-", "b": "-...", "c": "-.-.", "d": "-..", "e": ".", "f": "..-.", "g": "--.", "h": "....",
+    "i": "..", "j": ".---", "k": "-.-", "l": ".-..", "m": "--", "n": "-.", "o": "---", "p": ".--.",
+    "q": "--.-", "r": ".-.", "s": "...", "t": "-", "u": "..-", "v": "...-", "w": ".--", "x": "-..-",
+    "y": "-.--", "z": "--..", "0": "-----", "1": ".----", "2": "..---", "3": "...--", "4": "....-",
+    "5": ".....", "6": "-....", "7": "--...", "8": "---..", "9": "----.", " ": "/",
+}
+
+
+async def _cmd_morse(ctx: Ctx):
+    if not ctx.content:
+        await ctx.send("Usage: `!morse <text>`")
+        return
+    encoded = " ".join(_MORSE_TABLE.get(c, c) for c in ctx.content.lower()[:100])
+    await ctx.send(f"`{encoded}`")
+
+
+FUN_COMMANDS = {
+    "joke": CommandSpec("Tells a random joke.", _cmd_joke, None, "fun"),
+    "fact": CommandSpec("Shares a random fun fact.", _cmd_fact, None, "fun"),
+    "fortune": CommandSpec("Cracks open a fortune cookie.", _cmd_fortune, None, "fun"),
+    "would": CommandSpec("Would you rather...?", _cmd_would, None, "fun"),
+    "trivia": CommandSpec("Random trivia question with a spoiler-tagged answer.", _cmd_trivia, None, "fun"),
+    "rps": CommandSpec("Rock, paper, scissors against the bot.", _cmd_rps, None, "fun"),
+    "ship": CommandSpec("Compatibility rating between two names.", _cmd_ship, None, "fun"),
+    "mock": CommandSpec("mOcKs yOuR tExT lIkE tHiS.", _cmd_mock, None, "fun"),
+    "clap": CommandSpec("👏 Inserts 👏 claps 👏 between 👏 words.", _cmd_clap, None, "fun"),
+    "bigtext": CommandSpec("Turns short text into big letter emoji.", _cmd_bigtext, None, "fun"),
+    "hack": CommandSpec("Pretends to hack someone (it's a joke).", _cmd_hack, None, "fun"),
+    "rate": CommandSpec("Rates anything out of 10.", _cmd_rate, None, "fun"),
+    "binary": CommandSpec("Converts text to binary.", _cmd_binary, None, "fun"),
+    "morse": CommandSpec("Converts text to morse code.", _cmd_morse, None, "fun"),
 }
 
 
@@ -606,6 +982,156 @@ async def _cmd_removerole(ctx: Ctx):
         await ctx.send("I can't manage that role (role hierarchy?).")
 
 
+async def _cmd_createrole(ctx: Ctx):
+    if not await _check_perm(ctx, "manage_roles"):
+        return
+    if not ctx.content:
+        await ctx.send("Usage: `!createrole <name>`")
+        return
+    try:
+        role = await ctx.guild.create_role(name=ctx.content[:100], reason=f"Created by {ctx.author}")
+        await ctx.send(f"Created role **{role.name}**.")
+    except discord.HTTPException as exc:
+        await ctx.send(f"Couldn't create that role: {exc.text}")
+
+
+async def _cmd_deleterole(ctx: Ctx):
+    if not await _check_perm(ctx, "manage_roles"):
+        return
+    role = ctx.message.role_mentions[0] if ctx.message.role_mentions else _resolve_role(ctx, ctx.content)
+    if not role:
+        await ctx.send("Usage: `!deleterole <role name or @role>`")
+        return
+    try:
+        name = role.name
+        await role.delete(reason=f"Deleted by {ctx.author}")
+        await ctx.send(f"Deleted role **{name}**.")
+    except discord.HTTPException as exc:
+        await ctx.send(f"Couldn't delete that role: {exc.text}")
+
+
+async def _cmd_purgeuser(ctx: Ctx):
+    if not await _check_perm(ctx, "manage_messages"):
+        return
+    if not ctx.message.mentions or len(ctx.args) < 2:
+        await ctx.send("Usage: `!purgeuser @member <count>`")
+        return
+    target = ctx.message.mentions[0]
+    try:
+        count = int(ctx.args[1])
+    except ValueError:
+        await ctx.send("Count must be a number.")
+        return
+    count = max(1, min(count, 100))
+    try:
+        deleted = await ctx.channel.purge(limit=min(count * 5, 500), check=lambda m: m.author.id == target.id)
+        note = await ctx.channel.send(f"Deleted {len(deleted)} message(s) from **{target}**.")
+        await asyncio.sleep(4)
+        await note.delete()
+    except discord.Forbidden:
+        await ctx.send("I need Manage Messages here to do that.")
+    except discord.HTTPException as exc:
+        await ctx.send(f"Couldn't purge: {exc.text}")
+
+
+async def _cmd_banid(ctx: Ctx):
+    if not await _check_perm(ctx, "ban_members"):
+        return
+    if not ctx.args:
+        await ctx.send("Usage: `!banid <user_id> [reason]`")
+        return
+    try:
+        user_id = int(ctx.args[0])
+    except ValueError:
+        await ctx.send("That doesn't look like a user ID.")
+        return
+    reason = " ".join(ctx.args[1:]) or None
+    try:
+        await ctx.guild.ban(discord.Object(id=user_id), reason=reason)
+        await ctx.send(f"Banned user ID `{user_id}`." + (f" Reason: {reason}" if reason else ""))
+    except discord.HTTPException as exc:
+        await ctx.send(f"Couldn't ban: {exc.text}")
+
+
+async def _cmd_announce(ctx: Ctx):
+    if not await _check_perm(ctx, "manage_messages"):
+        return
+    if not ctx.message.channel_mentions or len(ctx.args) < 2:
+        await ctx.send("Usage: `!announce #channel <message>`")
+        return
+    channel = ctx.message.channel_mentions[0]
+    text = ctx.content
+    for cm in ctx.message.channel_mentions:
+        text = text.replace(cm.mention, "").strip()
+    if not text:
+        await ctx.send("Write a message to announce.")
+        return
+    try:
+        await channel.send(text)
+        await ctx.send(f"Announced in {channel.mention}.")
+    except discord.Forbidden:
+        await ctx.send(f"I can't send messages in {channel.mention}.")
+
+
+async def _cmd_pin(ctx: Ctx):
+    if not await _check_perm(ctx, "manage_messages"):
+        return
+    ref = ctx.message.reference
+    if not ref or not ref.message_id:
+        await ctx.send("Reply to the message you want to pin, then use `!pin`.")
+        return
+    try:
+        msg = ref.resolved or await ctx.channel.fetch_message(ref.message_id)
+        await msg.pin()
+        await ctx.send("Pinned.")
+    except discord.HTTPException as exc:
+        await ctx.send(f"Couldn't pin that: {exc.text}")
+
+
+async def _cmd_unpin(ctx: Ctx):
+    if not await _check_perm(ctx, "manage_messages"):
+        return
+    ref = ctx.message.reference
+    if not ref or not ref.message_id:
+        await ctx.send("Reply to the pinned message you want to unpin, then use `!unpin`.")
+        return
+    try:
+        msg = ref.resolved or await ctx.channel.fetch_message(ref.message_id)
+        await msg.unpin()
+        await ctx.send("Unpinned.")
+    except discord.HTTPException as exc:
+        await ctx.send(f"Couldn't unpin that: {exc.text}")
+
+
+async def _cmd_clearnick(ctx: Ctx):
+    if not await _check_perm(ctx, "manage_nicknames"):
+        return
+    if not ctx.message.mentions:
+        await ctx.send("Usage: `!clearnick @member`")
+        return
+    target = ctx.message.mentions[0]
+    try:
+        await target.edit(nick=None)
+        await ctx.send(f"Reset **{target}**'s nickname.")
+    except discord.Forbidden:
+        await ctx.send("I can't do that (role hierarchy?).")
+
+
+async def _cmd_banlist(ctx: Ctx):
+    if not await _check_perm(ctx, "ban_members"):
+        return
+    try:
+        bans = [entry async for entry in ctx.guild.bans(limit=25)]
+    except discord.HTTPException as exc:
+        await ctx.send(f"Couldn't fetch the ban list: {exc.text}")
+        return
+    if not bans:
+        await ctx.send("No bans in this server.")
+        return
+    lines = [f"{b.user} (`{b.user.id}`)" for b in bans[:25]]
+    await ctx.send(f"**Banned users** ({len(bans)} shown):\n" + "\n".join(lines))
+
+
 MODERATION_COMMANDS = {
     "kick": CommandSpec("Kicks a member from the server.", _cmd_kick, "kick_members", "moderation"),
     "ban": CommandSpec("Bans a member from the server.", _cmd_ban, "ban_members", "moderation"),
@@ -623,6 +1149,15 @@ MODERATION_COMMANDS = {
     "nick": CommandSpec("Changes a member's nickname.", _cmd_nick, "manage_nicknames", "moderation"),
     "addrole": CommandSpec("Gives a member a role.", _cmd_addrole, "manage_roles", "moderation"),
     "removerole": CommandSpec("Removes a role from a member.", _cmd_removerole, "manage_roles", "moderation"),
+    "createrole": CommandSpec("Creates a new role.", _cmd_createrole, "manage_roles", "moderation"),
+    "deleterole": CommandSpec("Deletes a role.", _cmd_deleterole, "manage_roles", "moderation"),
+    "purgeuser": CommandSpec("Deletes recent messages from a specific member.", _cmd_purgeuser, "manage_messages", "moderation"),
+    "banid": CommandSpec("Bans a user by ID, even if not in the server.", _cmd_banid, "ban_members", "moderation"),
+    "announce": CommandSpec("Sends a message to another channel.", _cmd_announce, "manage_messages", "moderation"),
+    "pin": CommandSpec("Pins the replied-to message.", _cmd_pin, "manage_messages", "moderation"),
+    "unpin": CommandSpec("Unpins the replied-to message.", _cmd_unpin, "manage_messages", "moderation"),
+    "clearnick": CommandSpec("Resets a member's nickname.", _cmd_clearnick, "manage_nicknames", "moderation"),
+    "banlist": CommandSpec("Lists banned users.", _cmd_banlist, "ban_members", "moderation"),
 }
 
 
@@ -630,6 +1165,7 @@ MODERATION_COMMANDS = {
 
 BUILTIN_COMMANDS = {}
 BUILTIN_COMMANDS.update(UTILITY_COMMANDS)
+BUILTIN_COMMANDS.update(FUN_COMMANDS)
 BUILTIN_COMMANDS.update(MODERATION_COMMANDS)
 for _name, (_desc, _handler, _perm) in bot_music.MUSIC_COMMANDS.items():
     BUILTIN_COMMANDS[_name] = CommandSpec(_desc, _handler, _perm, "music")

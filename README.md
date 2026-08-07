@@ -9,7 +9,7 @@ local web UI at `http://127.0.0.1:5000` instead of the command line.
 - `run.py` — checks/installs the required **Python** packages, then starts the server
 - `app.py` — the Flask app: all the `/api/...` routes the UI talks to
 - `bot_manager.py` — runs the actual discord.py client in the background
-- `bot_commands.py` — utility + moderation `!commands`, on/off toggle storage, per-user command cooldowns, and the custom-command sandbox
+- `bot_commands.py` — utility + fun + moderation `!commands`, on/off toggle storage, per-user command cooldowns, and the custom-command sandbox
 - `bot_music.py` — the `!join`/`!play`/`!menu`/... voice commands, the interactive now-playing menu, and playback state
 - `bot_rp.py` — the `!kiss`/`!hug`/... roleplay commands and their GIF storage
 - `bot_backup.py` — server structure snapshot/restore for the Backup tab (web UI only, no chat command)
@@ -65,9 +65,10 @@ Open `http://127.0.0.1:5000` in your phone's browser.
 - Choose an image and hit **Update profile picture** to change the bot's avatar
 - **Presence**: set what shows under the bot's name in the member list (Playing/Watching/Listening to/Competing in + text). Saved and reapplied automatically every time the bot connects.
 
-**Cmds tab** — 40+ built-in commands across three categories, each with an on/off toggle, plus a search box to find one quickly:
-- **Utility** (16): `!ping`, `!cmds`/`!help`, `!uptime`, `!avatar`, `!userinfo`, `!serverinfo`, `!say` (also deletes your original message), `!coinflip`, `!roll`, `!8ball`, `!time`, `!calc`, `!choose`, `!reverse`, `!remind`
-- **Moderation** (16): `!kick`, `!ban`, `!softban`, `!unban`, `!timeout`, `!untimeout`, `!warn`, `!warnings`, `!clearwarnings`, `!purge`, `!slowmode`, `!lock`, `!unlock`, `!nick`, `!addrole`, `!removerole` — every one of these checks the caller has the matching Discord permission (and that the bot does too) before running anything, and refuses with a clear message if not
+**Cmds tab** — 75 built-in commands across four categories, each with an on/off toggle, plus a search box to find one quickly:
+- **Utility** (27): `!ping`, `!cmds`/`!help`, `!uptime`, `!avatar`, `!userinfo`, `!serverinfo`, `!say` (also deletes your original message), `!coinflip`, `!roll`, `!8ball`, `!time`, `!calc`, `!choose`, `!reverse`, `!remind`, `!password`, `!uuid`, `!base64`, `!hash`, `!color`, `!timestamp`, `!invite`, `!poll`, `!channelinfo`, `!roleinfo`, `!permissions`
+- **Fun** (14): `!joke`, `!fact`, `!fortune`, `!would`, `!trivia`, `!rps`, `!ship`, `!mock`, `!clap`, `!bigtext`, `!hack`, `!rate`, `!binary`, `!morse` — all self-contained (no external APIs), so they never fail from a third-party service being down
+- **Moderation** (25): `!kick`, `!ban`, `!softban`, `!unban`, `!timeout`, `!untimeout`, `!warn`, `!warnings`, `!clearwarnings`, `!purge`, `!slowmode`, `!lock`, `!unlock`, `!nick`, `!addrole`, `!removerole`, `!createrole`, `!deleterole`, `!purgeuser`, `!banid`, `!announce`, `!pin`, `!unpin`, `!clearnick`, `!banlist` — every one of these checks the caller has the matching Discord permission (and that the bot does too) before running anything, and refuses with a clear message if not
 - **Music** (9): `!join`, `!leave`, `!play`, `!menu`, `!pause`, `!resume`, `!skip`, `!stop`, `!queue` — needs the `ffmpeg` binary, `PyNaCl` (voice encryption), and `davey` (Discord's now-mandatory DAVE end-to-end voice encryption, required since March 2026); `setup.sh` tries to install all of it automatically on Termux, but if any piece is missing `!play` tells you instead of failing silently. `!play` (and `!menu`) show an interactive now-playing menu — see below.
 - **Requires "Message Content Intent" turned on** for your bot in the Developer Portal (**Bot** page) — without it, discord.py can't read what people type, so no `!command` will ever trigger. This is separate from the token and has to be flipped on manually per-bot.
 - Every command, of every kind (built-in, RP, custom), has a 3-second per-user cooldown — spamming one just gets silently ignored until the cooldown clears.
@@ -87,7 +88,8 @@ Open `http://127.0.0.1:5000` in your phone's browser.
 
 **RP tab**
 - Action commands like `!kiss @user` and `!hug @user` — ten are built in (`kiss`, `hug`, `slap`, `pat`, `cuddle`, `poke`, `bonk`, `highfive`, `tickle`, `wave`), and **New custom RP command** lets you add more by name.
-- Every one of them, built-in or custom, needs GIFs added before it'll do anything — hit **Edit gifs** on any command (including the built-in ones) to set up to 5 GIF URLs. Empty slots are ignored, extras past 5 are ignored, and the bot picks one at random each time the command runs. If none are set yet, using the command sends an error telling you to add some instead of failing silently.
+- Every one of them, built-in or custom, needs GIFs added before it'll do anything — hit **Edit** on any command (including the built-in ones) to set up to 10 GIF URLs. Empty slots are ignored, extras past 10 are ignored, and the bot picks one at random each time the command runs. If none are set yet, using the command sends an error telling you to add some instead of failing silently.
+- The same **Edit** screen also lets you add up to 10 custom message templates, using `{author}` and `{target}` as placeholders (e.g. `{author} tackles {target} into a pile of leaves!`) — one is picked at random alongside the GIF. Leave them all blank to fall back to the default "`{author} verbs {target}!`" phrasing.
 - Each RP command has its own on/off toggle too; only custom ones can be deleted outright (built-ins can only be toggled off).
 
 **Backup tab** — web UI only, nothing here is a chat command:
