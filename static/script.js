@@ -598,6 +598,7 @@ const utilityCmdList = document.getElementById("utilityCmdList");
 const funCmdList = document.getElementById("funCmdList");
 const moderationCmdList = document.getElementById("moderationCmdList");
 const musicCmdList = document.getElementById("musicCmdList");
+const nsfwCmdList = document.getElementById("nsfwCmdList");
 
 function renderToggle(name, enabled, onToggle) {
   const label = document.createElement("label");
@@ -645,7 +646,7 @@ function renderBuiltinCmdItem(c) {
 
 async function loadBuiltinCommands() {
   const cmds = await api("/api/commands/builtin");
-  const byCategory = { utility: [], fun: [], moderation: [], music: [] };
+  const byCategory = { utility: [], fun: [], moderation: [], music: [], nsfw: [] };
   cmds.forEach((c) => { (byCategory[c.category] || byCategory.utility).push(c); });
 
   const fill = (el, list) => {
@@ -656,6 +657,7 @@ async function loadBuiltinCommands() {
   fill(funCmdList, byCategory.fun);
   fill(moderationCmdList, byCategory.moderation);
   fill(musicCmdList, byCategory.music);
+  fill(nsfwCmdList, byCategory.nsfw);
   filterBuiltinCommands();
 }
 
