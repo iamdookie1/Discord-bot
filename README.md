@@ -16,6 +16,7 @@ local web UI at `http://127.0.0.1:5000` instead of the command line.
 - `templates/`, `static/` — the UI (Home, Text, Bot, Cmds, Custom, RP, Backup tabs)
 - `config.json` — created automatically the first time you save a token or set a presence (kept only on your device)
 - `custom_commands.json`, `command_settings.json`, `rp_commands.json`, `warnings.json`, `server_backups.json` — created automatically as you use the Custom/Cmds/RP/Backup tabs (all kept only on your device, none of it committed to git)
+- `rp_media/` — GIFs/images/converted videos uploaded from the RP tab, created automatically (kept only on your device, never committed to git)
 
 ## First-time setup (in Termux)
 
@@ -88,7 +89,7 @@ Open `http://127.0.0.1:5000` in your phone's browser.
 
 **RP tab**
 - Action commands like `!kiss @user` and `!hug @user` — ten are built in (`kiss`, `hug`, `slap`, `pat`, `cuddle`, `poke`, `bonk`, `highfive`, `tickle`, `wave`), and **New custom RP command** lets you add more by name.
-- Every one of them, built-in or custom, needs GIFs added before it'll do anything — hit **Edit** on any command (including the built-in ones) to set up to 10 GIF URLs. Empty slots are ignored, extras past 10 are ignored, and the bot picks one at random each time the command runs. If none are set yet, using the command sends an error telling you to add some instead of failing silently.
+- Every one of them, built-in or custom, needs GIFs added before it'll do anything — hit **Edit** on any command (including the built-in ones) to set up to 10 of them. Each slot takes either a pasted URL or a file uploaded straight from your device (images/GIFs are kept as-is; a video gets its first 8 seconds converted to a GIF automatically, which needs the `ffmpeg` binary — `setup.sh` installs it for you). Uploaded files are stored locally in `rp_media/` and sent to Discord as a real file attachment (not a URL), since Discord's servers can't reach back into your phone to fetch one. Empty slots are ignored, extras past 10 are ignored, and the bot picks one at random each time the command runs. If none are set yet, using the command sends an error telling you to add some instead of failing silently.
 - The same **Edit** screen also lets you add up to 10 custom message templates, using `{author}` and `{target}` as placeholders (e.g. `{author} tackles {target} into a pile of leaves!`) — one is picked at random alongside the GIF. Leave them all blank to fall back to the default "`{author} verbs {target}!`" phrasing.
 - Each RP command has its own on/off toggle too; only custom ones can be deleted outright (built-ins can only be toggled off).
 

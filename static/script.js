@@ -864,16 +864,90 @@ function renderRpCmdItem(c) {
   gifLabel.textContent = `GIFs (up to ${MAX_RP_GIFS})`;
   editor.appendChild(gifLabel);
 
-  const gifInputs = [];
+  function refreshSlotPreview(slot) {
+    const val = slot.input.value.trim();
+    if (val.startsWith("local:")) {
+      slot.preview.src = `/rp_media/${encodeURIComponent(val.slice("local:".length))}`;
+      slot.preview.style.display = "inline-block";
+    } else {
+      slot.preview.removeAttribute("src");
+      slot.preview.style.display = "none";
+    }
+  }
+
+  const gifSlots = [];
   for (let i = 0; i < MAX_RP_GIFS; i++) {
+    const wrapper = document.createElement("div");
+    wrapper.className = "rp-gif-slot";
+
     const input = document.createElement("input");
     input.type = "text";
     input.className = "field-input mono rp-gif-input";
-    input.placeholder = `GIF URL ${i + 1}`;
+    input.placeholder = `GIF URL ${i + 1}, or upload below`;
     input.value = c.gifs[i] || "";
-    gifInputs.push(input);
-    editor.appendChild(input);
+
+    const preview = document.createElement("img");
+    preview.className = "rp-gif-preview";
+    preview.alt = "";
+
+    const slot = { input, preview };
+    input.addEventListener("input", () => refreshSlotPreview(slot));
+    refreshSlotPreview(slot);
+
+    wrapper.append(input, preview);
+    editor.appendChild(wrapper);
+    gifSlots.push(slot);
   }
+
+  const uploadRow = document.createElement("div");
+  uploadRow.className = "rp-upload-row";
+  const uploadInput = document.createElement("input");
+  uploadInput.type = "file";
+  uploadInput.accept = "image/*,video/*";
+  uploadInput.className = "field-input rp-upload-input";
+  const uploadBtn = document.createElement("button");
+  uploadBtn.type = "button";
+  uploadBtn.className = "btn-outline btn-small";
+  uploadBtn.textContent = "Upload";
+  uploadRow.append(uploadInput, uploadBtn);
+  editor.appendChild(uploadRow);
+
+  const uploadHint = document.createElement("p");
+  uploadHint.className = "field-hint";
+  uploadHint.style.marginTop = "0";
+  uploadHint.textContent = "Images/GIFs are used as-is; videos are converted to a GIF automatically (first 8s, needs ffmpeg). Max 30MB — fills the next empty slot above.";
+  editor.appendChild(uploadHint);
+
+  const uploadMsg = document.createElement("p");
+  uploadMsg.className = "form-msg";
+  editor.appendChild(uploadMsg);
+
+  uploadBtn.addEventListener("click", async () => {
+    const file = uploadInput.files[0];
+    if (!file) {
+      setMsg(uploadMsg, "Choose a file first.", "error");
+      return;
+    }
+    const emptySlot = gifSlots.find((s) => !s.input.value.trim());
+    if (!emptySlot) {
+      setMsg(uploadMsg, "All 10 GIF slots are full — clear one first.", "error");
+      return;
+    }
+    uploadBtn.disabled = true;
+    setMsg(uploadMsg, file.type.startsWith("video") ? "Uploading and converting to a GIF…" : "Uploading…", "");
+    const formData = new FormData();
+    formData.append("file", file);
+    const data = await api(`/api/rp/commands/${encodeURIComponent(c.name)}/upload`, { method: "POST", body: formData });
+    uploadBtn.disabled = false;
+    if (data.ok) {
+      emptySlot.input.value = data.value;
+      refreshSlotPreview(emptySlot);
+      uploadInput.value = "";
+      setMsg(uploadMsg, "Uploaded — click Save to add it to the command.", "success");
+    } else {
+      setMsg(uploadMsg, data.error || "Couldn't upload that file.", "error");
+    }
+  });
 
   const msgLabel = document.createElement("label");
   msgLabel.className = "field-label";
@@ -908,7 +982,7 @@ function renderRpCmdItem(c) {
   saveBtn.textContent = "Save";
   saveBtn.addEventListener("click", async () => {
     saveBtn.disabled = true;
-    const gifs = gifInputs.map((inp) => inp.value.trim());
+    const gifs = gifSlots.map((s) => s.input.value.trim());
     const messages = messageInputs.map((inp) => inp.value.trim());
     const data = await api(`/api/rp/commands/${encodeURIComponent(c.name)}/content`, {
       method: "POST",
