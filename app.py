@@ -1,7 +1,7 @@
 import json
 import os
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, render_template, request, send_from_directory
 
 import bot_backup
 import bot_commands
@@ -440,6 +440,28 @@ def rp_commands_content(name):
     bot_rp.set_gifs(name, gifs)
     bot_rp.set_messages(name, messages)
     return jsonify({"ok": True})
+
+
+@app.route("/api/rp/commands/<name>/upload", methods=["POST"])
+def rp_commands_upload(name):
+    name = name.strip().lower()
+    if not bot_rp.has_command(name):
+        return jsonify({"ok": False, "error": "Unknown RP command."}), 404
+
+    file = request.files.get("file")
+    if not file or not file.filename:
+        return jsonify({"ok": False, "error": "Choose a file first."}), 400
+
+    data = file.read()
+    ok, result = bot_rp.save_upload(data, file.filename)
+    if not ok:
+        return jsonify({"ok": False, "error": result}), 400
+    return jsonify({"ok": True, "value": result})
+
+
+@app.route("/rp_media/<path:filename>")
+def rp_media_file(filename):
+    return send_from_directory(bot_rp.RP_MEDIA_DIR, filename)
 
 
 @app.route("/api/rp/commands/<name>/toggle", methods=["POST"])

@@ -1,22 +1,39 @@
 """
 Roleplay commands (!kiss, !hug, ...). Each one, built-in or custom, posts a
-random GIF from up to 10 configured URLs, with the accompanying text
-picked randomly from up to 10 custom message templates (using {author}
-and {target} as placeholders) — or a default "{author} verbs {target}!"
-line if no custom messages are set. If no GIFs are configured yet, it
-sends an error telling the user to add some from the RP tab.
+random GIF from up to 10 configured slots — either a remote URL or a file
+uploaded from the device (images/GIFs are kept as-is, videos are converted
+to a GIF with ffmpeg) — with the accompanying text picked randomly from up
+to 10 custom message templates (using {author} and {target} as
+placeholders) — or a default "{author} verbs {target}!" line if no custom
+messages are set. If no GIFs are configured yet, it sends an error telling
+the user to add some from the RP tab.
+
+Uploaded files are stored locally and referenced in the gifs list as
+"local:<filename>" rather than a URL, since Discord's servers can't reach
+this device to fetch an embed image URL — those get sent as a real file
+attachment instead (see handle()).
 """
 import json
 import os
 import random
+import shutil
+import subprocess
+import uuid
 
 import discord
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 RP_COMMANDS_PATH = os.path.join(BASE_DIR, "rp_commands.json")
+RP_MEDIA_DIR = os.path.join(BASE_DIR, "rp_media")
+os.makedirs(RP_MEDIA_DIR, exist_ok=True)
 
 MAX_GIFS = 10
 MAX_MESSAGES = 10
+LOCAL_PREFIX = "local:"
+
+_IMAGE_EXTS = {"gif", "png", "jpg", "jpeg", "webp"}
+_VIDEO_EXTS = {"mp4", "mov", "webm", "mkv", "avi", "m4v"}
+_MAX_UPLOAD_BYTES = 30 * 1024 * 1024
 
 # name -> (verb used in the sentence, default description)
 BUILTIN_RP_ACTIONS = {
@@ -31,6 +48,48 @@ BUILTIN_RP_ACTIONS = {
     "tickle": ("tickles", "Tickle someone."),
     "wave": ("waves at", "Wave at someone."),
 }
+
+
+def save_upload(data: bytes, original_filename: str):
+    """Saves an uploaded image/GIF as-is, or converts an uploaded video to a
+    GIF with ffmpeg. Returns (ok, url_or_error) — on success url_or_error is
+    a "local:<filename>" string suitable for storing in a gifs list."""
+    if not data:
+        return False, "That file looks empty."
+    if len(data) > _MAX_UPLOAD_BYTES:
+        return False, "File too large (max 30MB)."
+
+    ext = original_filename.rsplit(".", 1)[-1].lower() if "." in original_filename else ""
+    token = uuid.uuid4().hex
+
+    if ext in _IMAGE_EXTS:
+        out_name = f"{token}.{ext}"
+        with open(os.path.join(RP_MEDIA_DIR, out_name), "wb") as f:
+            f.write(data)
+        return True, f"{LOCAL_PREFIX}{out_name}"
+
+    if ext in _VIDEO_EXTS:
+        if not shutil.which("ffmpeg"):
+            return False, "Converting video to a GIF needs the ffmpeg binary, which isn't installed."
+        in_path = os.path.join(RP_MEDIA_DIR, f"{token}_src.{ext}")
+        out_name = f"{token}.gif"
+        out_path = os.path.join(RP_MEDIA_DIR, out_name)
+        with open(in_path, "wb") as f:
+            f.write(data)
+        try:
+            subprocess.run(
+                ["ffmpeg", "-y", "-i", in_path, "-t", "8",
+                 "-vf", "fps=15,scale=320:-1:flags=lanczos", out_path],
+                capture_output=True, timeout=60, check=True,
+            )
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            return False, "Couldn't convert that video to a GIF."
+        finally:
+            if os.path.exists(in_path):
+                os.remove(in_path)
+        return True, f"{LOCAL_PREFIX}{out_name}"
+
+    return False, "Unsupported file type — use an image (gif/png/jpg/webp) or video (mp4/mov/webm/mkv)."
 
 
 def _load() -> dict:
@@ -157,5 +216,15 @@ async def handle(name: str, ctx):
         text = f"**{ctx.author.display_name}** {verb} **{target.display_name}**!"
 
     embed = discord.Embed(description=text)
-    embed.set_image(url=gif)
-    await ctx.send(embed=embed)
+
+    if gif.startswith(LOCAL_PREFIX):
+        filename = gif[len(LOCAL_PREFIX):]
+        path = os.path.join(RP_MEDIA_DIR, filename)
+        if not os.path.isfile(path):
+            await ctx.send(f"An uploaded GIF for `!{name}` is missing on disk — remove it and re-upload from the RP tab.")
+            return
+        embed.set_image(url=f"attachment://{filename}")
+        await ctx.send(embed=embed, file=discord.File(path, filename=filename))
+    else:
+        embed.set_image(url=gif)
+        await ctx.send(embed=embed)
