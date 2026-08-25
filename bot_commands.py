@@ -40,7 +40,6 @@ from collections import namedtuple
 import discord
 
 import bot_music
-import bot_nsfw
 import bot_rp
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -1170,8 +1169,6 @@ BUILTIN_COMMANDS.update(FUN_COMMANDS)
 BUILTIN_COMMANDS.update(MODERATION_COMMANDS)
 for _name, (_desc, _handler, _perm) in bot_music.MUSIC_COMMANDS.items():
     BUILTIN_COMMANDS[_name] = CommandSpec(_desc, _handler, _perm, "music")
-for _name, (_desc, _handler, _perm) in bot_nsfw.NSFW_COMMANDS.items():
-    BUILTIN_COMMANDS[_name] = CommandSpec(_desc, _handler, _perm, "nsfw")
 
 
 def name_taken(name: str) -> bool:
