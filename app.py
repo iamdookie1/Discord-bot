@@ -101,6 +101,8 @@ def channels():
     guild_id = request.args.get("guild_id", "")
     if not guild_id:
         return jsonify([])
+    if request.args.get("type") == "voice":
+        return jsonify(bot_manager.get_voice_channels(guild_id))
     return jsonify(bot_manager.get_text_channels(guild_id))
 
 

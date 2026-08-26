@@ -1456,19 +1456,16 @@ async def run_custom_command(code: str, ctx: Ctx):
 def _music_channel_block_reason(ctx: Ctx):
     """None if music commands are allowed to run here; otherwise the
     message to send instead. Unlike RP, this isn't hidden — a server
-    without a music channel configured, or a wrong-channel attempt, gets a
-    clear pointer rather than silence."""
+    without a music voice channel configured gets a clear pointer rather
+    than silence. Which voice channel to actually join is resolved by
+    bot_music.py itself (!play/!join always target the configured
+    channel, regardless of which text channel the command was typed in)."""
     if not ctx.guild:
         return "This only works in a server."
     if voice_owner.get(ctx.guild.id) == "tts":
         return "Sorry, TTS is on right now — turn it off with `!tts` first if you want music."
-    channel_id = guild_settings.get_music_channel(ctx.guild.id)
-    if not channel_id:
-        return "No music channel has been set for this server yet — pick one from the Control Deck web UI."
-    if ctx.channel.id != channel_id:
-        channel = ctx.guild.get_channel(channel_id)
-        where = channel.mention if channel else "the configured channel"
-        return f"Music commands only work in {where} here."
+    if not guild_settings.get_music_channel(ctx.guild.id):
+        return "No music voice channel has been set for this server yet — pick one from the Control Deck web UI."
     return None
 
 

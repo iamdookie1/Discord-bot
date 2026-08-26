@@ -1214,11 +1214,14 @@ async function refreshModChannels() {
     modLogChannelSelect.innerHTML = '<option value="">Pick a server first&hellip;</option>';
     return;
   }
-  const channels = await api(`/api/channels?guild_id=${encodeURIComponent(guildId)}`);
-  const options = '<option value="">None</option>' +
-    channels.map((c) => `<option value="${c.id}">#${escapeHtml(c.name)}</option>`).join("");
-  modMusicChannelSelect.innerHTML = options;
-  modLogChannelSelect.innerHTML = options;
+  const [voiceChannels, textChannels] = await Promise.all([
+    api(`/api/channels?guild_id=${encodeURIComponent(guildId)}&type=voice`),
+    api(`/api/channels?guild_id=${encodeURIComponent(guildId)}`),
+  ]);
+  modMusicChannelSelect.innerHTML = '<option value="">None</option>' +
+    voiceChannels.map((c) => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join("");
+  modLogChannelSelect.innerHTML = '<option value="">None</option>' +
+    textChannels.map((c) => `<option value="${c.id}">#${escapeHtml(c.name)}</option>`).join("");
 }
 
 async function loadGuildSettings() {
