@@ -16,8 +16,13 @@ don't go through Discord's API at all, so they can poll far more often;
 see get_state_dict()/web_*() below, called from app.py.
 """
 import asyncio
+import json
+import re
 import shutil
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 
 import discord
 
@@ -48,7 +53,20 @@ FFMPEG_OPTIONS = {
     "before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5",
     "options": "-vn",
 }
-YTDLP_OPTIONS = {"format": "bestaudio/best", "noplaylist": True, "quiet": True, "default_search": "ytsearch"}
+YTDLP_OPTIONS = {
+    "format": "bestaudio/best",
+    "noplaylist": True,
+    "quiet": True,
+    "default_search": "ytsearch",
+    # A recurring YouTube-side anti-bot workaround: without this, extraction
+    # can succeed but hand back a stream URL that 403s the moment ffmpeg
+    # actually requests it. Keeping yt-dlp itself up to date (see run.py)
+    # matters at least as much — this alone doesn't fix an outdated version.
+    "extractor_args": {"youtube": {"player_client": ["android", "web"]}},
+}
+
+_SPOTIFY_TRACK_RE = re.compile(r"open\.spotify\.com/(?:intl-\w+/)?track/([A-Za-z0-9]+)")
+_SPOTIFY_OTHER_RE = re.compile(r"open\.spotify\.com/(?:intl-\w+/)?(album|playlist|artist)/([A-Za-z0-9]+)")
 
 MENU_REFRESH_SECONDS = 5
 IDLE_DISCONNECT_SECONDS = 5 * 60
@@ -78,7 +96,7 @@ def _unavailable_reason():
 
 class GuildMusicState:
     def __init__(self):
-        self.queue = []            # list[dict(title, url, duration, requester)]
+        self.queue = []            # list[dict(title, query, duration, requester)] — no url; see _play_next
         self.current = None        # dict, same shape as a queue entry, or None
         self.source = None         # discord.PCMVolumeTransformer of the current track
         self.volume = 1.0          # 0.0 - 2.0
@@ -89,6 +107,7 @@ class GuildMusicState:
         self.menu_message = None   # discord.Message — the persistent now-playing menu
         self.refresh_task = None   # asyncio.Task ticking the menu's elapsed time
         self.idle_task = None      # asyncio.Task that disconnects after IDLE_DISCONNECT_SECONDS
+        self.text_channel = None   # last text channel !play was used in — for skip/error messages
 
 
 _states: dict[int, GuildMusicState] = {}
@@ -349,6 +368,43 @@ def _schedule_idle_disconnect(guild: discord.Guild, voice_client: discord.VoiceC
 
 # ==================== extraction & playback ====================
 
+async def _maybe_resolve_spotify(query: str) -> str:
+    """If `query` is a Spotify link, resolves it to a "song — artist"
+    search string via Spotify's own public oEmbed endpoint (an official,
+    documented, no-API-key-needed endpoint — not an unofficial scrape).
+    Playback still happens through YouTube either way: Spotify's actual
+    audio streams are DRM-protected and no bot can play them directly.
+    Non-Spotify queries pass through unchanged."""
+    if "open.spotify.com" not in query:
+        return query
+
+    if _SPOTIFY_OTHER_RE.search(query) and not _SPOTIFY_TRACK_RE.search(query):
+        raise ValueError(
+            "Only single Spotify track links are supported — album/playlist links would need "
+            "Spotify API credentials this bot doesn't have."
+        )
+    if not _SPOTIFY_TRACK_RE.search(query):
+        return query  # some other spotify.com URL shape — let yt-dlp's normal error handling take it
+
+    oembed_url = f"https://open.spotify.com/oembed?url={urllib.parse.quote(query, safe='')}"
+    loop = asyncio.get_event_loop()
+
+    def _fetch():
+        req = urllib.request.Request(oembed_url, headers={"User-Agent": "discord-bot-control-panel"})
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+
+    try:
+        data = await loop.run_in_executor(None, _fetch)
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError):
+        raise ValueError("Couldn't look up that Spotify link right now — try again in a bit.")
+
+    title = (data.get("title") or "").strip()
+    if not title:
+        raise ValueError("Couldn't read that Spotify link.")
+    return title
+
+
 async def _extract(query: str):
     loop = asyncio.get_event_loop()
 
@@ -357,7 +413,12 @@ async def _extract(query: str):
             info = ydl.extract_info(query, download=False)
             if "entries" in info:
                 info = info["entries"][0]
-            return {"title": info.get("title", query), "url": info["url"], "duration": info.get("duration")}
+            return {
+                "title": info.get("title", query),
+                "url": info["url"],
+                "duration": info.get("duration"),
+                "http_headers": info.get("http_headers") or {},
+            }
 
     return await loop.run_in_executor(None, _run)
 
@@ -379,10 +440,37 @@ async def _play_next(guild: discord.Guild, voice_client: discord.VoiceClient):
 
     _cancel_idle_disconnect(state)
     track = state.queue.pop(0)
+
+    # Re-resolve right before playing rather than trusting the URL from
+    # whenever the track was queued — YouTube stream URLs expire and can
+    # 403 if fetched even a little while after they were issued, so only
+    # a URL obtained immediately before ffmpeg uses it is reliable.
+    try:
+        fresh = await _extract(track["query"])
+    except Exception:
+        if state.text_channel:
+            try:
+                await state.text_channel.send(f"Couldn't play **{track['title']}** — skipping.")
+            except discord.HTTPException:
+                pass
+        await _play_next(guild, voice_client)
+        return
+
+    track["url"] = fresh["url"]
+    track["http_headers"] = fresh.get("http_headers") or {}
     state.current = track
     _reset_position(state)
 
-    source = discord.PCMVolumeTransformer(discord.FFmpegPCMAudio(track["url"], **FFMPEG_OPTIONS), volume=state.volume)
+    before_options = FFMPEG_OPTIONS["before_options"]
+    headers = track["http_headers"]
+    if headers:
+        header_str = "".join(f"{k}: {v}\r\n" for k, v in headers.items())
+        before_options += f' -headers "{header_str}"'
+
+    source = discord.PCMVolumeTransformer(
+        discord.FFmpegPCMAudio(track["url"], before_options=before_options, options=FFMPEG_OPTIONS["options"]),
+        volume=state.volume,
+    )
     state.source = source
 
     def _after(_error):
@@ -458,7 +546,7 @@ async def _cmd_play(ctx):
         await ctx.send("This only works in a server.")
         return
     if not ctx.content:
-        await ctx.send("Usage: `!play <song name or URL>`")
+        await ctx.send("Usage: `!play <song name, YouTube link, or Spotify track link>`")
         return
 
     vc = ctx.guild.voice_client
@@ -470,13 +558,16 @@ async def _cmd_play(ctx):
         voice_owner.claim(ctx.guild.id, "music")
 
     state = _state(ctx.guild.id)
+    state.text_channel = ctx.channel
     await ctx.send("Looking that up...")
     try:
-        track = await _extract(ctx.content)
+        query = await _maybe_resolve_spotify(ctx.content)
+        track = await _extract(query)
     except Exception as exc:  # noqa: BLE001
         await ctx.send(f"Couldn't find that: {exc}")
         return
     track["requester"] = str(ctx.author)
+    track["query"] = query
     state.queue.append(track)
 
     if not vc.is_playing() and not vc.is_paused():
@@ -561,7 +652,7 @@ async def _cmd_queue(ctx):
 MUSIC_COMMANDS = {
     "join": ("Joins the server's configured music voice channel.", _cmd_join, None),
     "leave": ("Leaves the voice channel.", _cmd_leave, None),
-    "play": ("Plays a song by name or URL (queues if already playing).", _cmd_play, None),
+    "play": ("Plays a song by name, YouTube link, or Spotify track link (queues if already playing).", _cmd_play, None),
     "menu": ("Shows the interactive now-playing menu.", _cmd_menu, None),
     "pause": ("Pauses the current track.", _cmd_pause, None),
     "resume": ("Resumes the paused track.", _cmd_resume, None),
