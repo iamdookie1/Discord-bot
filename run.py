@@ -64,7 +64,6 @@ _PIP_ENV_OVERRIDES = {
 
 
 def _pip_install(pip_name):
-    print(f"[setup]   -> pip install {pip_name}")
     env = os.environ.copy()
     env.update(_PIP_ENV_OVERRIDES.get(pip_name, {}))
     result = subprocess.run(
@@ -79,44 +78,20 @@ def check_and_install():
     missing_core = _missing(REQUIRED_PACKAGES)
     missing_extra = _missing(EXTRA_PACKAGES)
 
-    if not missing_core and not missing_extra:
-        print("[setup] All required Python packages are already installed.")
-        return
-
-    if missing_core:
-        print(f"[setup] Missing core packages: {', '.join(missing_core)}")
-    if missing_extra:
-        print(f"[setup] Missing extra packages (used by custom commands): {', '.join(missing_extra)}")
-    print("[setup] Installing now, this can take a minute on first run...")
-
     for pip_name in missing_core:
         if not _pip_install(pip_name):
             print(
-                f"[setup] Failed to install {pip_name}. If you're on Termux, "
-                "try running setup.sh first (it installs the system packages "
-                "discord.py needs to build), then run this again."
+                f"Error: couldn't install required package '{pip_name}'. If you're on "
+                "Termux, run setup.sh first (it installs the system packages discord.py "
+                "needs to build), then run this again.",
+                file=sys.stderr,
             )
             sys.exit(1)
 
     for pip_name in missing_extra:
-        if not _pip_install(pip_name):
-            if pip_name == "PyNaCl":
-                print(
-                    "[setup] Couldn't install PyNaCl — music commands (!join/!play/...) won't "
-                    "work, everything else will. On Termux, run `pkg install -y libsodium "
-                    "pkg-config clang make` and re-run setup.sh to try again."
-                )
-            elif pip_name == "davey":
-                print(
-                    "[setup] Couldn't install davey — Discord now requires it for voice, so "
-                    "music commands won't work, everything else will. It's a newer package; "
-                    "if this keeps failing on Termux, try `pkg install -y rust` first (some "
-                    "of its dependencies build native code) and re-run setup.sh."
-                )
-            else:
-                print(f"[setup] Couldn't install {pip_name} — continuing without it.")
-
-    print("[setup] Package check complete.")
+        # Non-fatal — the feature that needs it (e.g. !play, !tts) tells the
+        # user what's missing when it's actually used, instead of here.
+        _pip_install(pip_name)
 
 
 def main():
@@ -124,8 +99,7 @@ def main():
     # Import after the check so we never hit an ImportError above this line.
     from app import app  # noqa: E402
 
-    print("\n[bot-panel] Starting control panel...")
-    print("[bot-panel] Open http://127.0.0.1:5000 in your browser\n")
+    print("Open http://127.0.0.1:5000 in your browser")
     app.run(host="127.0.0.1", port=5000, debug=False, use_reloader=False)
 
 

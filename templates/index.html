@@ -321,11 +321,6 @@
       </div>
 
       <div class="card">
-        <h2 class="card-title">Fun</h2>
-        <div class="cmd-list" id="funCmdList"></div>
-      </div>
-
-      <div class="card">
         <h2 class="card-title">Moderation <span class="card-title-sub">permission-gated</span></h2>
         <div class="cmd-list" id="moderationCmdList"></div>
       </div>
@@ -386,8 +381,12 @@
     <section class="panel" id="tab-rp">
       <header class="panel-head">
         <h1>RP</h1>
-        <p>Action commands like !kiss and !hug &mdash; each posts a random GIF you provide.</p>
+        <p>Action commands like !kiss and !hug &mdash; hidden by default, only usable in one owner-approved channel per server.</p>
       </header>
+
+      <div class="card card-quiet">
+        <p>RP commands are hidden everywhere by default &mdash; not listed in <span class="mono">!cmds</span>/<span class="mono">!help</span>, and inert outside one allowed channel per server. Only Discord user ID <span class="mono">1409771422011887678</span> can set that channel, with <span class="mono">!allowchannelrp</span> run inside it &mdash; there's no control for this here on purpose. Once set, <span class="mono">!rpcmds</span> run in that same channel lists what's available. This tab is just for configuring GIFs/messages below, which still applies wherever the channel ends up being.</p>
+      </div>
 
       <div class="card card-quiet">
         <p>Every RP command, built-in or custom, needs at least one GIF added below before it'll work &mdash; up to 10 per command, either pasted as a URL or uploaded straight from your device (videos are converted to a GIF automatically). Optionally add up to 10 custom messages too (using <span class="mono">{author}</span> / <span class="mono">{target}</span>), or leave them blank for the default phrasing. Use it as <span class="mono">!kiss @user</span>.</p>
