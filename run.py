@@ -95,6 +95,14 @@ def check_and_install():
         # user what's missing when it's actually used, instead of here.
         _pip_install(pip_name)
 
+    # yt-dlp breaks against YouTube regularly as YouTube changes its
+    # anti-bot measures, and yt-dlp's own advice for "playback failed" /
+    # 403 errors is almost always "update yt-dlp first" — so unlike the
+    # other extras, it's worth re-checking for a newer version on every
+    # startup instead of only installing it once and leaving it stale.
+    # (Harmless no-op if the loop above just installed it already.)
+    _pip_install("yt-dlp")
+
 
 def main():
     check_and_install()

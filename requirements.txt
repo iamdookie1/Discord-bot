@@ -22,6 +22,9 @@ pyfiglet>=1.0.2
 # Discord's now-mandatory DAVE end-to-end voice encryption, and playback
 # needs the ffmpeg binary on PATH — if any of these is missing, !play just
 # tells the user what to install instead of the app failing to start.
+# yt-dlp has no version pin on purpose — run.py re-upgrades it on every
+# startup, since staying current is the main defense against YouTube
+# playback 403s.
 PyNaCl>=1.5.0
 davey
-yt-dlp>=2024.4.9
+yt-dlp
