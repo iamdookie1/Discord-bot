@@ -35,6 +35,11 @@
       <span>Bot</span>
     </button>
 
+    <button class="rail-tab" data-tab="music">
+      <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M9 3v11.55A3.5 3.5 0 1 0 11 17.5V8h6V3H9Z"/></svg>
+      <span>Music</span>
+    </button>
+
     <button class="rail-tab" data-tab="cmds">
       <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M2 4h20a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1Zm2.7 4.3 4 4-4 4L3.3 15l2.6-2.7-2.6-2.7 1.4-1.3ZM12 15h7v2h-7v-2Z"/></svg>
       <span>Cmds</span>
@@ -250,6 +255,88 @@
 
         <p class="field-hint" id="musicQueueHint"></p>
         <p class="form-msg" id="musicMsg"></p>
+      </div>
+    </section>
+
+    <!-- ===== Music tab ===== -->
+    <section class="panel" id="tab-music">
+      <header class="panel-head">
+        <h1>Music</h1>
+        <p>Full playback controls, live queue, and audio effects for whichever server the bot is playing in.</p>
+      </header>
+
+      <div class="card">
+        <label class="field-label" for="musicTabServerSelect">Server</label>
+        <select id="musicTabServerSelect" class="field-input">
+          <option value="">Connect the bot first&hellip;</option>
+        </select>
+      </div>
+
+      <div class="card card-quiet" id="musicTabUnavailable" style="display:none;">
+        <p>Music isn't set up on this install &mdash; the bot is missing ffmpeg or PyNaCl. Check the Music section on the Cmds tab for details.</p>
+      </div>
+
+      <div id="musicTabContent" style="display:none;">
+        <div class="card">
+          <h2 class="card-title">Now playing</h2>
+          <div class="music-title" id="mtTrackTitle">Nothing playing</div>
+          <p class="field-hint" id="mtRequester"></p>
+          <div class="music-progress-track">
+            <div class="music-progress-fill" id="mtProgressFill"></div>
+          </div>
+          <div class="music-time-row">
+            <span id="mtElapsed">0:00</span>
+            <span id="mtDuration">&mdash;</span>
+          </div>
+
+          <div class="btn-row music-controls">
+            <button class="btn-outline btn-small" id="mtPauseBtn">⏸️ Pause</button>
+            <button class="btn-outline btn-small" id="mtSkipBtn">⏭️ Skip</button>
+            <button class="btn-outline btn-small" id="mtStopBtn">⏹️ Stop</button>
+          </div>
+          <div class="btn-row music-controls">
+            <button class="btn-outline btn-small" id="mtVolDownBtn">🔉 Vol&minus;</button>
+            <span class="mono music-volume-label" id="mtVolumeLabel">100%</span>
+            <button class="btn-outline btn-small" id="mtVolUpBtn">🔊 Vol+</button>
+            <button class="btn-outline btn-small" id="mtLoopBtn">🔁 Loop: Off</button>
+          </div>
+
+          <p class="form-msg" id="mtMsg"></p>
+        </div>
+
+        <div class="card">
+          <h2 class="card-title">Effects <span class="card-title-sub">applies instantly, mid-song</span></h2>
+          <div class="music-effect-grid">
+            <label class="music-effect-option">
+              <input type="radio" name="mtEffect" value="off" checked>
+              <span>Off</span>
+            </label>
+            <label class="music-effect-option">
+              <input type="radio" name="mtEffect" value="nightcore">
+              <span>Nightcore</span>
+            </label>
+            <label class="music-effect-option">
+              <input type="radio" name="mtEffect" value="slowed_reverb">
+              <span>Slowed + Reverb</span>
+            </label>
+            <label class="music-effect-option">
+              <input type="radio" name="mtEffect" value="bass_boost">
+              <span>Bass Boost</span>
+            </label>
+            <label class="music-effect-option">
+              <input type="radio" name="mtEffect" value="8d">
+              <span>8D Audio</span>
+            </label>
+          </div>
+          <p class="field-hint">Restarts the current track from the same position with the new effect applied &mdash; there's a brief skip in audio while it switches over.</p>
+        </div>
+
+        <div class="card">
+          <h2 class="card-title">Queue</h2>
+          <div id="mtQueueList" class="music-queue-list">
+            <p class="field-hint">Queue is empty.</p>
+          </div>
+        </div>
       </div>
     </section>
 

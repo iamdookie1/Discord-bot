@@ -11,9 +11,15 @@ tabs.forEach((tab) => {
     document.getElementById(`tab-${tab.dataset.tab}`).classList.add("is-active");
     if (tab.dataset.tab === "text") {
       refreshGuilds();
-      startMusicPolling();
+      textMusicController.start();
     } else {
-      stopMusicPolling();
+      textMusicController.stop();
+    }
+    if (tab.dataset.tab === "music") {
+      refreshMusicTabServers();
+      musicTabController.start();
+    } else {
+      musicTabController.stop();
     }
     if (tab.dataset.tab === "bot") {
       loadBotNamePlaceholder();
@@ -161,7 +167,7 @@ async function refreshChannels(guildId) {
 
 serverSelect.addEventListener("change", () => {
   refreshChannels(serverSelect.value);
-  pollMusicState();
+  textMusicController.poll();
 });
 
 messageInput.addEventListener("input", () => {
@@ -352,25 +358,9 @@ clearEmbedBtn.addEventListener("click", () => {
 
 addEmbedFieldRow();
 
-// ---------- text tab: music ----------
-
-const musicCard = document.getElementById("musicCard");
-const musicTrackTitle = document.getElementById("musicTrackTitle");
-const musicProgressFill = document.getElementById("musicProgressFill");
-const musicElapsed = document.getElementById("musicElapsed");
-const musicDuration = document.getElementById("musicDuration");
-const musicPauseBtn = document.getElementById("musicPauseBtn");
-const musicSkipBtn = document.getElementById("musicSkipBtn");
-const musicStopBtn = document.getElementById("musicStopBtn");
-const musicVolDownBtn = document.getElementById("musicVolDownBtn");
-const musicVolUpBtn = document.getElementById("musicVolUpBtn");
-const musicVolumeLabel = document.getElementById("musicVolumeLabel");
-const musicLoopBtn = document.getElementById("musicLoopBtn");
-const musicQueueHint = document.getElementById("musicQueueHint");
-const musicMsg = document.getElementById("musicMsg");
+// ---------- music: shared controller (used by the Text tab's compact card and the Music tab) ----------
 
 const MUSIC_POLL_MS = 1000;
-let musicPollTimer = null;
 
 function fmtMusicTime(seconds) {
   seconds = Math.max(0, Math.floor(seconds || 0));
@@ -382,110 +372,225 @@ function fmtMusicTime(seconds) {
   return h ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
 }
 
-function renderMusicState(data) {
-  if (!data || !data.available) {
-    musicCard.style.display = "none";
-    return;
+// `els.card` (optional): a single container hidden/shown wholesale when music is unavailable.
+// `els.content`/`els.unavailableEl` (optional): used instead of `els.card` when the tab shows
+// an explicit "not available" message alongside other always-visible chrome (e.g. the server picker).
+function createMusicController(getGuildId, els) {
+  let pollTimer = null;
+
+  function render(data) {
+    const available = !!(data && data.available);
+
+    if (els.unavailableEl) els.unavailableEl.style.display = data && !available ? "block" : "none";
+    if (els.content) els.content.style.display = available ? "block" : "none";
+    if (els.card) els.card.style.display = available ? "block" : "none";
+    if (!available) return;
+
+    if (!data.connected || !data.title) {
+      els.title.textContent = "Nothing playing";
+      els.progressFill.style.width = "0%";
+      els.elapsed.textContent = "0:00";
+      els.duration.textContent = "—";
+      els.volumeLabel.textContent = `${data.volume ?? 100}%`;
+      els.loopBtn.textContent = `🔁 Loop: ${(data.loop_mode || "off").replace(/^\w/, (c) => c.toUpperCase())}`;
+      els.pauseBtn.textContent = "⏸️ Pause";
+      if (els.queueHint) els.queueHint.textContent = "";
+      if (els.queueList) els.queueList.innerHTML = '<p class="field-hint">Queue is empty.</p>';
+      if (els.requester) els.requester.textContent = "";
+      setEffectRadios(data.effect_mode);
+      return;
+    }
+
+    els.title.textContent = data.title;
+    els.elapsed.textContent = fmtMusicTime(data.elapsed);
+    els.pauseBtn.textContent = data.paused ? "▶️ Resume" : "⏸️ Pause";
+    els.volumeLabel.textContent = `${data.volume}%`;
+    els.loopBtn.textContent = `🔁 Loop: ${data.loop_mode.replace(/^\w/, (c) => c.toUpperCase())}`;
+    if (els.requester) els.requester.textContent = data.requester ? `Requested by ${data.requester}` : "";
+
+    if (data.duration) {
+      els.duration.textContent = fmtMusicTime(data.duration);
+      els.progressFill.style.width = `${Math.min(100, (data.elapsed / data.duration) * 100)}%`;
+    } else {
+      els.duration.textContent = "—";
+      els.progressFill.style.width = "0%";
+    }
+
+    if (els.queueHint) {
+      els.queueHint.textContent = data.queue_length
+        ? `${data.queue_length} more in queue: ${data.queue.slice(0, 3).join(", ")}${data.queue_length > 3 ? "…" : ""}`
+        : "";
+    }
+    if (els.queueList) {
+      els.queueList.innerHTML = data.queue_length
+        ? data.queue
+            .map((t, i) => `<div class="music-queue-item"><span class="music-queue-index">${i + 1}.</span> ${escapeHtml(t)}</div>`)
+            .join("")
+        : '<p class="field-hint">Queue is empty.</p>';
+    }
+
+    setEffectRadios(data.effect_mode);
   }
-  musicCard.style.display = "block";
 
-  if (!data.connected || !data.title) {
-    musicTrackTitle.textContent = "Nothing playing";
-    musicProgressFill.style.width = "0%";
-    musicElapsed.textContent = "0:00";
-    musicDuration.textContent = "—";
-    musicVolumeLabel.textContent = `${data.volume ?? 100}%`;
-    musicLoopBtn.textContent = `🔁 Loop: ${(data.loop_mode || "off").replace(/^\w/, (c) => c.toUpperCase())}`;
-    musicPauseBtn.textContent = "⏸️ Pause";
-    musicQueueHint.textContent = "";
-    return;
+  function setEffectRadios(mode) {
+    if (!els.effectRadios) return;
+    els.effectRadios().forEach((r) => {
+      r.checked = r.value === (mode || "off");
+    });
   }
 
-  musicTrackTitle.textContent = data.title;
-  musicElapsed.textContent = fmtMusicTime(data.elapsed);
-  musicPauseBtn.textContent = data.paused ? "▶️ Resume" : "⏸️ Pause";
-  musicVolumeLabel.textContent = `${data.volume}%`;
-  musicLoopBtn.textContent = `🔁 Loop: ${data.loop_mode.replace(/^\w/, (c) => c.toUpperCase())}`;
-
-  if (data.duration) {
-    musicDuration.textContent = fmtMusicTime(data.duration);
-    musicProgressFill.style.width = `${Math.min(100, (data.elapsed / data.duration) * 100)}%`;
-  } else {
-    musicDuration.textContent = "—";
-    musicProgressFill.style.width = "0%";
+  async function poll() {
+    const guildId = getGuildId();
+    if (!guildId) {
+      render(null);
+      return;
+    }
+    try {
+      const data = await api(`/api/music/state?guild_id=${encodeURIComponent(guildId)}`);
+      render(data);
+    } catch (e) {
+      // transient fetch failure — leave the display as-is, next poll will retry
+    }
   }
 
-  musicQueueHint.textContent = data.queue_length
-    ? `${data.queue_length} more in queue: ${data.queue.slice(0, 3).join(", ")}${data.queue_length > 3 ? "…" : ""}`
-    : "";
+  function start() {
+    stop();
+    poll();
+    pollTimer = setInterval(poll, MUSIC_POLL_MS);
+  }
+
+  function stop() {
+    if (pollTimer) {
+      clearInterval(pollTimer);
+      pollTimer = null;
+    }
+  }
+
+  async function action(name) {
+    const guildId = getGuildId();
+    if (!guildId) return;
+    const data = await api("/api/music/action", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ guild_id: guildId, action: name }),
+    });
+    setMsg(els.msg, data.ok ? "" : data.error || "Couldn't do that.", data.ok ? "" : "error");
+    poll();
+  }
+
+  async function volume(delta) {
+    const guildId = getGuildId();
+    if (!guildId) return;
+    const data = await api("/api/music/volume", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ guild_id: guildId, delta }),
+    });
+    if (!data.ok) setMsg(els.msg, data.error || "Couldn't do that.", "error");
+    poll();
+  }
+
+  async function setEffect(mode) {
+    const guildId = getGuildId();
+    if (!guildId) return;
+    const data = await api("/api/music/effect", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ guild_id: guildId, mode }),
+    });
+    if (!data.ok) setMsg(els.msg, data.error || "Couldn't set that effect.", "error");
+    poll();
+  }
+
+  return { render, poll, start, stop, action, volume, setEffect };
 }
 
-async function pollMusicState() {
-  const guildId = serverSelect.value;
-  if (!guildId) {
-    musicCard.style.display = "none";
-    return;
-  }
-  try {
-    const data = await api(`/api/music/state?guild_id=${encodeURIComponent(guildId)}`);
-    renderMusicState(data);
-  } catch (e) {
-    // transient fetch failure — leave the card as-is, next poll will retry
-  }
-}
+// ---------- text tab: compact music card ----------
 
-function startMusicPolling() {
-  stopMusicPolling();
-  pollMusicState();
-  musicPollTimer = setInterval(pollMusicState, MUSIC_POLL_MS);
-}
+const musicPauseBtn = document.getElementById("musicPauseBtn");
+const musicSkipBtn = document.getElementById("musicSkipBtn");
+const musicStopBtn = document.getElementById("musicStopBtn");
+const musicVolDownBtn = document.getElementById("musicVolDownBtn");
+const musicVolUpBtn = document.getElementById("musicVolUpBtn");
+const musicLoopBtn = document.getElementById("musicLoopBtn");
 
-function stopMusicPolling() {
-  if (musicPollTimer) {
-    clearInterval(musicPollTimer);
-    musicPollTimer = null;
-  }
-}
-
-async function musicAction(action) {
-  const guildId = serverSelect.value;
-  if (!guildId) return;
-  const data = await api("/api/music/action", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ guild_id: guildId, action }),
-  });
-  if (!data.ok) {
-    setMsg(musicMsg, data.error || "Couldn't do that.", "error");
-  } else {
-    setMsg(musicMsg, "", "");
-  }
-  pollMusicState();
-}
+const textMusicController = createMusicController(() => serverSelect.value, {
+  card: document.getElementById("musicCard"),
+  title: document.getElementById("musicTrackTitle"),
+  progressFill: document.getElementById("musicProgressFill"),
+  elapsed: document.getElementById("musicElapsed"),
+  duration: document.getElementById("musicDuration"),
+  pauseBtn: musicPauseBtn,
+  volumeLabel: document.getElementById("musicVolumeLabel"),
+  loopBtn: musicLoopBtn,
+  queueHint: document.getElementById("musicQueueHint"),
+  msg: document.getElementById("musicMsg"),
+});
 
 musicPauseBtn.addEventListener("click", () => {
-  musicAction(musicPauseBtn.textContent.includes("Resume") ? "resume" : "pause");
+  textMusicController.action(musicPauseBtn.textContent.includes("Resume") ? "resume" : "pause");
 });
-musicSkipBtn.addEventListener("click", () => musicAction("skip"));
-musicStopBtn.addEventListener("click", () => musicAction("stop"));
-musicLoopBtn.addEventListener("click", () => musicAction("loop"));
+musicSkipBtn.addEventListener("click", () => textMusicController.action("skip"));
+musicStopBtn.addEventListener("click", () => textMusicController.action("stop"));
+musicLoopBtn.addEventListener("click", () => textMusicController.action("loop"));
+musicVolDownBtn.addEventListener("click", () => textMusicController.volume(-10));
+musicVolUpBtn.addEventListener("click", () => textMusicController.volume(10));
 
-async function musicVolume(delta) {
-  const guildId = serverSelect.value;
-  if (!guildId) return;
-  const data = await api("/api/music/volume", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ guild_id: guildId, delta }),
+// ---------- music tab: full controls ----------
+
+const musicTabServerSelect = document.getElementById("musicTabServerSelect");
+const mtPauseBtn = document.getElementById("mtPauseBtn");
+const mtSkipBtn = document.getElementById("mtSkipBtn");
+const mtStopBtn = document.getElementById("mtStopBtn");
+const mtVolDownBtn = document.getElementById("mtVolDownBtn");
+const mtVolUpBtn = document.getElementById("mtVolUpBtn");
+const mtLoopBtn = document.getElementById("mtLoopBtn");
+
+const musicTabController = createMusicController(() => musicTabServerSelect.value, {
+  content: document.getElementById("musicTabContent"),
+  unavailableEl: document.getElementById("musicTabUnavailable"),
+  title: document.getElementById("mtTrackTitle"),
+  requester: document.getElementById("mtRequester"),
+  progressFill: document.getElementById("mtProgressFill"),
+  elapsed: document.getElementById("mtElapsed"),
+  duration: document.getElementById("mtDuration"),
+  pauseBtn: mtPauseBtn,
+  volumeLabel: document.getElementById("mtVolumeLabel"),
+  loopBtn: mtLoopBtn,
+  queueList: document.getElementById("mtQueueList"),
+  msg: document.getElementById("mtMsg"),
+  effectRadios: () => document.querySelectorAll('input[name="mtEffect"]'),
+});
+
+mtPauseBtn.addEventListener("click", () => {
+  musicTabController.action(mtPauseBtn.textContent.includes("Resume") ? "resume" : "pause");
+});
+mtSkipBtn.addEventListener("click", () => musicTabController.action("skip"));
+mtStopBtn.addEventListener("click", () => musicTabController.action("stop"));
+mtLoopBtn.addEventListener("click", () => musicTabController.action("loop"));
+mtVolDownBtn.addEventListener("click", () => musicTabController.volume(-10));
+mtVolUpBtn.addEventListener("click", () => musicTabController.volume(10));
+
+document.querySelectorAll('input[name="mtEffect"]').forEach((radio) => {
+  radio.addEventListener("change", () => {
+    if (radio.checked) musicTabController.setEffect(radio.value);
   });
-  if (!data.ok) {
-    setMsg(musicMsg, data.error || "Couldn't do that.", "error");
+});
+
+async function refreshMusicTabServers() {
+  const guilds = await api("/api/guilds");
+  const current = musicTabServerSelect.value;
+  if (!guilds.length) {
+    musicTabServerSelect.innerHTML = '<option value="">No servers found (is the bot online + invited?)</option>';
+    return;
   }
-  pollMusicState();
+  musicTabServerSelect.innerHTML =
+    '<option value="">Choose a server&hellip;</option>' +
+    guilds.map((g) => `<option value="${g.id}">${escapeHtml(g.name)}</option>`).join("");
+  if (current) musicTabServerSelect.value = current;
 }
 
-musicVolDownBtn.addEventListener("click", () => musicVolume(-10));
-musicVolUpBtn.addEventListener("click", () => musicVolume(10));
+musicTabServerSelect.addEventListener("change", () => musicTabController.poll());
 
 // ---------- bot tab: name / avatar ----------
 
