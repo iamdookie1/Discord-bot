@@ -21,6 +21,7 @@ import time
 
 import discord
 
+import guild_settings
 import voice_owner
 
 try:
@@ -397,6 +398,19 @@ async def _play_next(guild: discord.Guild, voice_client: discord.VoiceClient):
 
 # ==================== chat commands ====================
 
+async def _resolve_music_channel(ctx):
+    """The server's configured music voice channel, or None with an error
+    already sent. !join/!play always target this channel — not wherever
+    the invoking member happens to be sitting — since it's meant to be one
+    fixed, predictable spot per server."""
+    channel_id = guild_settings.get_music_channel(ctx.guild.id)
+    channel = ctx.guild.get_channel(channel_id) if channel_id else None
+    if not channel or not isinstance(channel, (discord.VoiceChannel, discord.StageChannel)):
+        await ctx.send("The configured music channel couldn't be found — pick one again from the Control Deck web UI.")
+        return None
+    return channel
+
+
 async def _cmd_join(ctx):
     reason = _unavailable_reason()
     if reason:
@@ -405,10 +419,9 @@ async def _cmd_join(ctx):
     if not ctx.guild:
         await ctx.send("This only works in a server.")
         return
-    if not ctx.author.voice or not ctx.author.voice.channel:
-        await ctx.send("Join a voice channel first.")
+    channel = await _resolve_music_channel(ctx)
+    if not channel:
         return
-    channel = ctx.author.voice.channel
     if ctx.guild.voice_client:
         await ctx.guild.voice_client.move_to(channel)
     else:
@@ -450,10 +463,10 @@ async def _cmd_play(ctx):
 
     vc = ctx.guild.voice_client
     if not vc:
-        if not ctx.author.voice or not ctx.author.voice.channel:
-            await ctx.send("Join a voice channel first, or use `!join`.")
+        channel = await _resolve_music_channel(ctx)
+        if not channel:
             return
-        vc = await ctx.author.voice.channel.connect()
+        vc = await channel.connect()
         voice_owner.claim(ctx.guild.id, "music")
 
     state = _state(ctx.guild.id)
@@ -546,7 +559,7 @@ async def _cmd_queue(ctx):
 
 # (description, handler, required_perm) — merged into bot_commands.BUILTIN_COMMANDS
 MUSIC_COMMANDS = {
-    "join": ("Joins your current voice channel.", _cmd_join, None),
+    "join": ("Joins the server's configured music voice channel.", _cmd_join, None),
     "leave": ("Leaves the voice channel.", _cmd_leave, None),
     "play": ("Plays a song by name or URL (queues if already playing).", _cmd_play, None),
     "menu": ("Shows the interactive now-playing menu.", _cmd_menu, None),

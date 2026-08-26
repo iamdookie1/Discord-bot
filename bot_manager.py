@@ -125,6 +125,18 @@ class BotManager:
             if c.permissions_for(guild.me).send_messages
         ]
 
+    def get_voice_channels(self, guild_id: str):
+        if not (self.client and self.status == "online"):
+            return []
+        guild = discord.utils.get(self.client.guilds, id=int(guild_id))
+        if not guild:
+            return []
+        return [
+            {"id": str(c.id), "name": c.name}
+            for c in guild.voice_channels
+            if c.permissions_for(guild.me).connect
+        ]
+
     def send_message(self, guild_id: str, channel_id: str, content: str):
         async def _send():
             channel = self.client.get_channel(int(channel_id))
