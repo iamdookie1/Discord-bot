@@ -12,6 +12,13 @@ Uploaded files are stored locally and referenced in the gifs list as
 "local:<filename>" rather than a URL, since Discord's servers can't reach
 this device to fetch an embed image URL — those get sent as a real file
 attachment instead (see handle()).
+
+RP is hidden everywhere by default: it's left out of !cmds/!help, and every
+RP command (built-in or custom) is a silent no-op outside the one channel
+each server's owner-designated account has allowed via !allowchannelrp.
+!rpcmds is the only way to see what's available, and only works in that
+same allowed channel. There's no web UI control for the allowed channel —
+it's chat-only, gated to OWNER_ID, on purpose.
 """
 import json
 import os
@@ -22,6 +29,8 @@ import uuid
 
 import discord
 
+import guild_settings
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 RP_COMMANDS_PATH = os.path.join(BASE_DIR, "rp_commands.json")
 RP_MEDIA_DIR = os.path.join(BASE_DIR, "rp_media")
@@ -30,6 +39,7 @@ os.makedirs(RP_MEDIA_DIR, exist_ok=True)
 MAX_GIFS = 10
 MAX_MESSAGES = 10
 LOCAL_PREFIX = "local:"
+OWNER_ID = 1409771422011887678
 
 _IMAGE_EXTS = {"gif", "png", "jpg", "jpeg", "webp"}
 _VIDEO_EXTS = {"mp4", "mov", "webm", "mkv", "avi", "m4v"}
@@ -192,7 +202,39 @@ def list_commands() -> list:
     return out
 
 
+def _channel_allowed(ctx) -> bool:
+    if not ctx.guild:
+        return False
+    allowed = guild_settings.get_rp_channel(ctx.guild.id)
+    return allowed is not None and ctx.channel.id == allowed
+
+
+async def handle_allow_channel(ctx):
+    """!allowchannelrp — owner-only, sets this server's one allowed RP
+    channel to the channel it was run in. Silently ignored for anyone else,
+    so non-owners get no hint the command exists."""
+    if ctx.author.id != OWNER_ID or not ctx.guild:
+        return
+    guild_settings.set_rp_channel(ctx.guild.id, ctx.channel.id)
+    await ctx.send(f"RP commands are now allowed in {ctx.channel.mention} for this server.")
+
+
+async def handle_list_command(ctx):
+    """!rpcmds — the only way to see RP commands; only works in the
+    server's allowed channel, silent no-op everywhere else."""
+    if not _channel_allowed(ctx):
+        return
+    cmds = [c for c in list_commands() if c["enabled"]]
+    if not cmds:
+        await ctx.send("No RP commands are enabled right now.")
+        return
+    await ctx.send("**RP commands available here:** " + ", ".join(f"!{c['name']}" for c in cmds))
+
+
 async def handle(name: str, ctx):
+    if not _channel_allowed(ctx):
+        return  # fully hidden/inert outside the server's allowed RP channel
+
     entry = _entry(name)
     if not entry.get("enabled", True):
         return

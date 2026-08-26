@@ -68,7 +68,6 @@ class BotManager:
         async def on_ready():
             self.status = "online"
             self.user_tag = str(self.client.user)
-            print(f"[bot] Logged in as {self.client.user}")
             if self.pending_presence:
                 activity_type, text = self.pending_presence
                 kind = PRESENCE_TYPES.get(activity_type, discord.ActivityType.playing)

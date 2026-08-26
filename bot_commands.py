@@ -134,9 +134,6 @@ async def _cmd_cmds(ctx: Ctx):
     for name, spec in BUILTIN_COMMANDS.items():
         by_category.setdefault(spec.category, []).append(name)
     lines = [f"**{cat.title()}:** " + ", ".join(f"!{n}" for n in sorted(names)) for cat, names in by_category.items()]
-    rp_names = [c["name"] for c in bot_rp.list_commands()]
-    if rp_names:
-        lines.append("**Rp:** " + ", ".join(f"!{n}" for n in rp_names))
     custom = load_custom_commands()
     if custom:
         lines.append("**Custom:** " + ", ".join(f"!{n}" for n in custom))
@@ -476,221 +473,6 @@ UTILITY_COMMANDS = {
     "channelinfo": CommandSpec("Shows info about the current channel.", _cmd_channelinfo, None, "utility"),
     "roleinfo": CommandSpec("Shows info about a role.", _cmd_roleinfo, None, "utility"),
     "permissions": CommandSpec("Shows your (or @mention's) key permissions.", _cmd_permissions, None, "utility"),
-}
-
-
-# ==================== fun commands ====================
-
-_JOKES = [
-    "Why don't scientists trust atoms? Because they make up everything.",
-    "I told my computer I needed a break, and it said no problem — it'll go to sleep.",
-    "Why do programmers prefer dark mode? Because light attracts bugs.",
-    "How many programmers does it take to change a light bulb? None — that's a hardware problem.",
-    "Why did the developer go broke? Because he used up all his cache.",
-    "I would tell you a UDP joke, but you might not get it.",
-    "There are 10 types of people in the world: those who understand binary and those who don't.",
-    "Why do Java developers wear glasses? Because they don't C#.",
-    "A SQL query walks into a bar, walks up to two tables, and asks: 'Can I join you?'",
-    "Debugging is being the detective in a crime movie where you're also the murderer.",
-]
-
-_FACTS = [
-    "Honey never spoils — archaeologists have found 3,000-year-old honey that's still edible.",
-    "A group of flamingos is called a 'flamboyance.'",
-    "Octopuses have three hearts and blue blood.",
-    "Bananas are berries, but strawberries aren't.",
-    "The Eiffel Tower can grow about 6 inches taller in summer heat.",
-    "A day on Venus is longer than a year on Venus.",
-    "Wombat poop is cube-shaped.",
-    "There are more possible chess games than atoms in the observable universe.",
-    "Sharks existed before trees.",
-    "The shortest war in recorded history lasted about 38 minutes.",
-]
-
-_FORTUNES = [
-    "A pleasant surprise is waiting for you.",
-    "Now is the time to try something new.",
-    "Your hard work is about to pay off.",
-    "A journey of a thousand miles begins with a single step.",
-    "Good things come to those who debug.",
-    "The best time to plant a tree was 20 years ago. The second best time is now.",
-    "An exciting opportunity lies ahead of you.",
-    "Patience is bitter, but its fruit is sweet.",
-]
-
-_WOULD_YOU_RATHER = [
-    "...have the ability to fly, or be invisible?",
-    "...always be 10 minutes late, or always be 20 minutes early?",
-    "...fight one horse-sized duck, or a hundred duck-sized horses?",
-    "...never use social media again, or never watch another movie/show again?",
-    "...be able to speak every language, or play every instrument?",
-    "...have unlimited money, or unlimited time?",
-    "...live without music, or live without TV/movies?",
-    "...always say everything on your mind, or never speak again?",
-]
-
-_TRIVIA = [
-    ("What planet is known as the Red Planet?", "Mars"),
-    ("What's the largest mammal in the world?", "The blue whale"),
-    ("How many continents are there?", "Seven"),
-    ("What's the smallest prime number?", "2"),
-    ("What language has the most native speakers?", "Mandarin Chinese"),
-    ("What year did the Titanic sink?", "1912"),
-    ("What's the hardest natural substance on Earth?", "Diamond"),
-    ("How many bones are in the adult human body?", "206"),
-]
-
-
-async def _cmd_joke(ctx: Ctx):
-    await ctx.send(random.choice(_JOKES))
-
-
-async def _cmd_fact(ctx: Ctx):
-    await ctx.send(f"🧠 {random.choice(_FACTS)}")
-
-
-async def _cmd_fortune(ctx: Ctx):
-    await ctx.send(f"🥠 {random.choice(_FORTUNES)}")
-
-
-async def _cmd_would(ctx: Ctx):
-    await ctx.send(f"Would you rather{random.choice(_WOULD_YOU_RATHER)}")
-
-
-async def _cmd_trivia(ctx: Ctx):
-    q, a = random.choice(_TRIVIA)
-    await ctx.send(f"❓ {q}\n||{a}||")
-
-
-_RPS_CHOICES = {"rock": "🪨", "paper": "📄", "scissors": "✂️"}
-_RPS_BEATS = {"rock": "scissors", "paper": "rock", "scissors": "paper"}
-
-
-async def _cmd_rps(ctx: Ctx):
-    if not ctx.args or ctx.args[0].lower() not in _RPS_CHOICES:
-        await ctx.send("Usage: `!rps <rock|paper|scissors>`")
-        return
-    player = ctx.args[0].lower()
-    bot_choice = random.choice(list(_RPS_CHOICES))
-    if player == bot_choice:
-        result = "It's a tie!"
-    elif _RPS_BEATS[player] == bot_choice:
-        result = "You win!"
-    else:
-        result = "I win!"
-    await ctx.send(f"You: {_RPS_CHOICES[player]}  Me: {_RPS_CHOICES[bot_choice]} — {result}")
-
-
-async def _cmd_ship(ctx: Ctx):
-    if len(ctx.args) < 2:
-        await ctx.send("Usage: `!ship <name1> <name2>`")
-        return
-    name1, name2 = ctx.args[0], ctx.args[1]
-    digest = hashlib.md5(f"{name1.lower()}{name2.lower()}".encode()).hexdigest()
-    pct = int(digest, 16) % 101
-    bar = "█" * (pct // 10) + "░" * (10 - pct // 10)
-    await ctx.send(f"💘 **{name1}** + **{name2}** = **{pct}%**\n`{bar}`")
-
-
-async def _cmd_mock(ctx: Ctx):
-    if not ctx.content:
-        await ctx.send("Usage: `!mock <text>`")
-        return
-    await ctx.send("".join(c.upper() if i % 2 else c.lower() for i, c in enumerate(ctx.content)))
-
-
-async def _cmd_clap(ctx: Ctx):
-    if not ctx.content:
-        await ctx.send("Usage: `!clap <text>`")
-        return
-    await ctx.send(" 👏 ".join(ctx.content.split()))
-
-
-_REGIONAL_LETTERS = {chr(c): chr(0x1F1E6 + c - ord("a")) for c in range(ord("a"), ord("z") + 1)}
-_DIGIT_NAMES = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"]
-
-
-async def _cmd_bigtext(ctx: Ctx):
-    if not ctx.content:
-        await ctx.send("Usage: `!bigtext <text>`")
-        return
-    out = []
-    for ch in ctx.content.lower()[:20]:
-        if ch in _REGIONAL_LETTERS:
-            out.append(_REGIONAL_LETTERS[ch])
-        elif ch == " ":
-            out.append("   ")
-        elif ch.isdigit():
-            out.append(f":{_DIGIT_NAMES[int(ch)]}:")
-        else:
-            out.append(ch)
-    await ctx.send(" ".join(out))
-
-
-async def _cmd_hack(ctx: Ctx):
-    target = ctx.message.mentions[0] if ctx.message.mentions else None
-    name = target.display_name if target else (ctx.content or "the mainframe")
-    steps = [
-        f"Initializing exploit against **{name}**...",
-        "Bypassing firewall... ✅",
-        "Cracking password hash... ✅",
-        "Accessing mainframe... ✅",
-        f"🎉 Successfully hacked **{name}**! (relax, this is just a joke)",
-    ]
-    await ctx.send("\n".join(steps))
-
-
-async def _cmd_rate(ctx: Ctx):
-    if not ctx.content:
-        await ctx.send("Usage: `!rate <thing>`")
-        return
-    digest = hashlib.md5(ctx.content.lower().encode()).hexdigest()
-    score = int(digest, 16) % 11
-    await ctx.send(f"I'd rate **{ctx.content}** a **{score}/10**.")
-
-
-async def _cmd_binary(ctx: Ctx):
-    if not ctx.content:
-        await ctx.send("Usage: `!binary <text>`")
-        return
-    binary = " ".join(format(ord(c), "08b") for c in ctx.content[:100])
-    if len(binary) > 1900:
-        binary = binary[:1900] + "..."
-    await ctx.send(f"`{binary}`")
-
-
-_MORSE_TABLE = {
-    "a": ".-", "b": "-...", "c": "-.-.", "d": "-..", "e": ".", "f": "..-.", "g": "--.", "h": "....",
-    "i": "..", "j": ".---", "k": "-.-", "l": ".-..", "m": "--", "n": "-.", "o": "---", "p": ".--.",
-    "q": "--.-", "r": ".-.", "s": "...", "t": "-", "u": "..-", "v": "...-", "w": ".--", "x": "-..-",
-    "y": "-.--", "z": "--..", "0": "-----", "1": ".----", "2": "..---", "3": "...--", "4": "....-",
-    "5": ".....", "6": "-....", "7": "--...", "8": "---..", "9": "----.", " ": "/",
-}
-
-
-async def _cmd_morse(ctx: Ctx):
-    if not ctx.content:
-        await ctx.send("Usage: `!morse <text>`")
-        return
-    encoded = " ".join(_MORSE_TABLE.get(c, c) for c in ctx.content.lower()[:100])
-    await ctx.send(f"`{encoded}`")
-
-
-FUN_COMMANDS = {
-    "joke": CommandSpec("Tells a random joke.", _cmd_joke, None, "fun"),
-    "fact": CommandSpec("Shares a random fun fact.", _cmd_fact, None, "fun"),
-    "fortune": CommandSpec("Cracks open a fortune cookie.", _cmd_fortune, None, "fun"),
-    "would": CommandSpec("Would you rather...?", _cmd_would, None, "fun"),
-    "trivia": CommandSpec("Random trivia question with a spoiler-tagged answer.", _cmd_trivia, None, "fun"),
-    "rps": CommandSpec("Rock, paper, scissors against the bot.", _cmd_rps, None, "fun"),
-    "ship": CommandSpec("Compatibility rating between two names.", _cmd_ship, None, "fun"),
-    "mock": CommandSpec("mOcKs yOuR tExT lIkE tHiS.", _cmd_mock, None, "fun"),
-    "clap": CommandSpec("👏 Inserts 👏 claps 👏 between 👏 words.", _cmd_clap, None, "fun"),
-    "bigtext": CommandSpec("Turns short text into big letter emoji.", _cmd_bigtext, None, "fun"),
-    "hack": CommandSpec("Pretends to hack someone (it's a joke).", _cmd_hack, None, "fun"),
-    "rate": CommandSpec("Rates anything out of 10.", _cmd_rate, None, "fun"),
-    "binary": CommandSpec("Converts text to binary.", _cmd_binary, None, "fun"),
-    "morse": CommandSpec("Converts text to morse code.", _cmd_morse, None, "fun"),
 }
 
 
@@ -1165,7 +947,6 @@ MODERATION_COMMANDS = {
 
 BUILTIN_COMMANDS = {}
 BUILTIN_COMMANDS.update(UTILITY_COMMANDS)
-BUILTIN_COMMANDS.update(FUN_COMMANDS)
 BUILTIN_COMMANDS.update(MODERATION_COMMANDS)
 for _name, (_desc, _handler, _perm) in bot_music.MUSIC_COMMANDS.items():
     BUILTIN_COMMANDS[_name] = CommandSpec(_desc, _handler, _perm, "music")
@@ -1332,6 +1113,16 @@ async def handle_message(message: discord.Message, client: discord.Client):
     args = parts[1:]
     content = message.content[len(COMMAND_PREFIX) + len(parts[0]):].strip()
     ctx = Ctx(message, args, content, client)
+
+    # RP's gating commands live outside the normal built-in/RP/custom
+    # dispatch below since their access rules (a hardcoded owner ID; a
+    # per-server allowed channel) don't fit either pattern.
+    if name == "allowchannelrp":
+        await bot_rp.handle_allow_channel(ctx)
+        return
+    if name == "rpcmds":
+        await bot_rp.handle_list_command(ctx)
+        return
 
     is_builtin = name in BUILTIN_COMMANDS
     is_rp = (not is_builtin) and bot_rp.has_command(name)
