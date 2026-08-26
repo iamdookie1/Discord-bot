@@ -12,13 +12,14 @@ local web UI at `http://127.0.0.1:5000` instead of the command line.
 - `bot_commands.py` — utility + moderation `!commands`, on/off toggle storage, per-user command cooldowns, and the custom-command sandbox
 - `bot_music.py` — the `!join`/`!play`/`!menu`/... voice commands, the interactive now-playing menu, and playback state
 - `bot_rp.py` — the `!kiss`/`!hug`/... roleplay commands, their GIF storage, and the owner-gated channel lockdown
-- `bot_tts.py` — `!tts`, which reads a text channel's messages aloud in voice via espeak-ng
+- `bot_tts.py` — `!tts`, which reads a text channel's messages aloud in voice via espeak-ng, plus the owner-only sound controls (`!tone`, `!pitch`, `!onlytm`, `!voiceselection`, `!volume`)
+- `owner.py` — the one hardcoded Discord user ID allowed to use owner-only commands (RP's channel lockdown, TTS's sound controls), shared so there's a single source of truth for it
 - `voice_owner.py` — tiny shared registry so music and TTS (only one voice connection per server) take turns instead of colliding
 - `guild_settings.py` — per-server settings (RP-allowed channel, music channel, mod-log channel, mute role), keyed by guild ID
 - `bot_backup.py` — server structure snapshot/restore for the Backup tab (web UI only, no chat command)
 - `templates/`, `static/` — the UI (Home, Text, Bot, Music, Cmds, Mod, Custom, RP, Backup tabs)
 - `config.json` — created automatically the first time you save a token or set a presence (kept only on your device)
-- `custom_commands.json`, `command_settings.json`, `rp_commands.json`, `warnings.json`, `server_backups.json`, `guild_settings.json` — created automatically as you use the app (all kept only on your device, none of it committed to git)
+- `custom_commands.json`, `command_settings.json`, `rp_commands.json`, `warnings.json`, `server_backups.json`, `guild_settings.json`, `tts_settings.json` — created automatically as you use the app (all kept only on your device, none of it committed to git)
 - `rp_media/` — GIFs/images/converted videos uploaded from the RP tab, created automatically (kept only on your device, never committed to git)
 
 ## First-time setup (in Termux)
@@ -96,6 +97,7 @@ Open `http://127.0.0.1:5000` in your phone's browser.
 - Strips before speaking: links, custom/unicode emoji, spoiler-tagged text (not read at all), markdown symbols, and mentions (replaced with the person's display name so it still reads naturally). A message with nothing left to say after that — just a GIF/link/emoji — is silently skipped, as is anything over 300 characters.
 - Uses `espeak-ng` (installed via `setup.sh`) — fully offline, no external API, so it can't go down the way an unofficial web TTS service could.
 - Music and TTS share the bot's one voice connection per server, so only one can run at a time: `!tts` refuses to start while music is playing ("Sorry, music's playing right now"), and music commands refuse to start while TTS is on ("Sorry, TTS is on right now") — turn one off to use the other.
+- A handful of extra sound controls exist but are hidden: `!tone`, `!pitch`, `!onlytm`, `!voiceselection`, `!volume`. Same lockdown as `!allowchannelrp` above — silent no-op for anyone but Discord user ID `1409771422011887678`, left out of `!cmds`/`!help` entirely, chat-only, no web UI control. `!voiceselection <1-20>` and `!volume <0-200>` pick which of espeak-ng's built-in voices to use and how loud it is — apply to everyone TTS reads, no download needed since all 20 ship with espeak-ng already. `!tone <1-10>` and `!pitch <-100 to 100>` only change how *the owner's own* messages sound (everyone else is unaffected) — a personal flourish rather than a server-wide setting. `!onlytm` toggles reading only the owner's own messages, ignoring everyone else in the linked voice channel.
 
 **Mod tab**
 - **Music channel**: pick the voice channel `!join`/`!play` connect to for that server — they always join this channel, not wherever the caller happens to be sitting. With nothing picked, music commands are fully blocked there — not just unrestricted.
