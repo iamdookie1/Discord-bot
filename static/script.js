@@ -597,6 +597,7 @@ clearPresenceBtn.addEventListener("click", () => {
 
 const utilityCmdList = document.getElementById("utilityCmdList");
 const moderationCmdList = document.getElementById("moderationCmdList");
+const ttsCmdList = document.getElementById("ttsCmdList");
 const musicCmdList = document.getElementById("musicCmdList");
 
 function renderToggle(name, enabled, onToggle) {
@@ -645,7 +646,7 @@ function renderBuiltinCmdItem(c) {
 
 async function loadBuiltinCommands() {
   const cmds = await api("/api/commands/builtin");
-  const byCategory = { utility: [], moderation: [], music: [] };
+  const byCategory = { utility: [], moderation: [], music: [], tts: [] };
   cmds.forEach((c) => { (byCategory[c.category] || byCategory.utility).push(c); });
 
   const fill = (el, list) => {
@@ -655,6 +656,7 @@ async function loadBuiltinCommands() {
   fill(utilityCmdList, byCategory.utility);
   fill(moderationCmdList, byCategory.moderation);
   fill(musicCmdList, byCategory.music);
+  fill(ttsCmdList, byCategory.tts);
   filterBuiltinCommands();
 }
 

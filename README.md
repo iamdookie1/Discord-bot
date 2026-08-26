@@ -12,6 +12,8 @@ local web UI at `http://127.0.0.1:5000` instead of the command line.
 - `bot_commands.py` — utility + moderation `!commands`, on/off toggle storage, per-user command cooldowns, and the custom-command sandbox
 - `bot_music.py` — the `!join`/`!play`/`!menu`/... voice commands, the interactive now-playing menu, and playback state
 - `bot_rp.py` — the `!kiss`/`!hug`/... roleplay commands, their GIF storage, and the owner-gated channel lockdown
+- `bot_tts.py` — `!tts`, which reads a text channel's messages aloud in voice via espeak-ng
+- `voice_owner.py` — tiny shared registry so music and TTS (only one voice connection per server) take turns instead of colliding
 - `guild_settings.py` — per-server settings (RP-allowed channel, music channel, mod-log channel, mute role), keyed by guild ID
 - `bot_backup.py` — server structure snapshot/restore for the Backup tab (web UI only, no chat command)
 - `templates/`, `static/` — the UI (Home, Text, Bot, Cmds, Mod, Custom, RP, Backup tabs)
@@ -67,10 +69,11 @@ Open `http://127.0.0.1:5000` in your phone's browser.
 - Choose an image and hit **Update profile picture** to change the bot's avatar
 - **Presence**: set what shows under the bot's name in the member list (Playing/Watching/Listening to/Competing in + text). Saved and reapplied automatically every time the bot connects.
 
-**Cmds tab** — 75 built-in commands across three categories, each with an on/off toggle, plus a search box to find one quickly. Info-style commands (`!userinfo`, `!serverinfo`, `!roleinfo`, `!permissions`, `!channelinfo`, `!warnings`, `!banlist`, `!avatar`, `!poll`) reply with an embed in the app's own accent color rather than plain text:
+**Cmds tab** — 76 built-in commands across four categories, each with an on/off toggle, plus a search box to find one quickly. Info-style commands (`!userinfo`, `!serverinfo`, `!roleinfo`, `!permissions`, `!channelinfo`, `!warnings`, `!banlist`, `!avatar`, `!poll`) reply with an embed in the app's own accent color rather than plain text:
 - **Utility** (35): `!ping`, `!cmds`/`!help`, `!uptime`, `!avatar`, `!userinfo`, `!serverinfo`, `!say` (also deletes your original message), `!coinflip`, `!roll`, `!8ball`, `!time`, `!calc`, `!choose`, `!reverse`, `!remind`, `!remindlist`, `!remindcancel`, `!password`, `!uuid`, `!base64`, `!hash`, `!color`, `!timestamp`, `!invite`, `!poll`, `!channelinfo`, `!roleinfo`, `!permissions`, `!snowflake` (decode a Discord ID's timestamp), `!membercount`, `!servericon`, `!emojis`, `!qr` (text-rendered QR code), `!ascii` (text banner, needs `pyfiglet`)
 - **Moderation** (31): `!kick`, `!ban`, `!softban`, `!unban`, `!timeout`, `!untimeout`, `!warn`, `!warnings`, `!clearwarnings`, `!warnremove`, `!purge`, `!slowmode`, `!lock`, `!unlock`, `!nick`, `!addrole`, `!removerole`, `!createrole`, `!deleterole`, `!purgeuser`, `!banid`, `!announce`, `!pin`, `!unpin`, `!clearnick`, `!banlist`, `!setmodlog`, `!muterole`, `!mute`, `!unmute`, `!tempban` — every one of these checks the caller has the matching Discord permission (and that the bot does too) before running anything, and refuses with a clear message if not. Kicks, bans, softbans, timeouts, warns, mutes, and tempbans also get posted as an embed to the server's mod-log channel (`!setmodlog #channel`), if one's been set — same for the equivalent actions run from the **Mod** tab.
 - **Music** (9): `!join`, `!leave`, `!play`, `!menu`, `!pause`, `!resume`, `!skip`, `!stop`, `!queue` — needs the `ffmpeg` binary, `PyNaCl` (voice encryption), and `davey` (Discord's now-mandatory DAVE end-to-end voice encryption, required since March 2026); `setup.sh` tries to install all of it automatically on Termux, but if any piece is missing `!play` tells you instead of failing silently. `!play` (and `!menu`) show an interactive now-playing menu — see below. Every music command also needs a channel set for that server on the **Mod** tab — with none set, they're fully blocked (not just unrestricted), and in the wrong channel they point you to the right one.
+- **TTS** (1): `!tts` — see below.
 - **Requires "Message Content Intent" turned on** for your bot in the Developer Portal (**Bot** page) — without it, discord.py can't read what people type, so no `!command` will ever trigger. This is separate from the token and has to be flipped on manually per-bot.
 - Every command, of every kind (built-in, RP, custom), has a 3-second per-user cooldown — spamming one just gets silently ignored until the cooldown clears.
 
@@ -80,6 +83,13 @@ Open `http://127.0.0.1:5000` in your phone's browser.
 - Only works for whoever's in the same voice channel as the bot, to stop randoms in other channels from taking over
 - The embed itself only re-renders every 5 seconds (Discord rate-limits message edits harder than that), but any button press updates it immediately regardless of that timer
 - The bot auto-disconnects after 5 minutes with nothing playing
+
+**`!tts`** — reads a text channel's messages aloud in voice, for anyone who'd rather type than talk:
+- Run `!tts` in any text channel while you're in a voice channel to turn it on — the bot joins your voice channel and links it to that text channel. Run `!tts` again (in that same text channel) to turn it off and leave.
+- Only reads messages posted in the linked text channel by people currently sitting in the linked voice channel — not everyone in the server, and not the message author's actual voice, just their typed words read aloud.
+- Strips before speaking: links, custom/unicode emoji, spoiler-tagged text (not read at all), markdown symbols, and mentions (replaced with the person's display name so it still reads naturally). A message with nothing left to say after that — just a GIF/link/emoji — is silently skipped, as is anything over 300 characters.
+- Uses `espeak-ng` (installed via `setup.sh`) — fully offline, no external API, so it can't go down the way an unofficial web TTS service could.
+- Music and TTS share the bot's one voice connection per server, so only one can run at a time: `!tts` refuses to start while music is playing ("Sorry, music's playing right now"), and music commands refuse to start while TTS is on ("Sorry, TTS is on right now") — turn one off to use the other.
 
 **Mod tab**
 - **Music channel**: pick the one channel per server music commands are allowed in. With nothing picked, music commands are fully blocked there — not just unrestricted.
