@@ -30,6 +30,7 @@ import uuid
 import discord
 
 import guild_settings
+from owner import OWNER_ID
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 RP_COMMANDS_PATH = os.path.join(BASE_DIR, "rp_commands.json")
@@ -39,7 +40,6 @@ os.makedirs(RP_MEDIA_DIR, exist_ok=True)
 MAX_GIFS = 10
 MAX_MESSAGES = 10
 LOCAL_PREFIX = "local:"
-OWNER_ID = 1409771422011887678
 
 _IMAGE_EXTS = {"gif", "png", "jpg", "jpeg", "webp"}
 _VIDEO_EXTS = {"mp4", "mov", "webm", "mkv", "avi", "m4v"}

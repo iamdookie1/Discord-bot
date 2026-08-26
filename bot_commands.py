@@ -1492,6 +1492,24 @@ async def handle_message(message: discord.Message, client: discord.Client):
         await bot_rp.handle_list_command(ctx)
         return
 
+    # Same story for TTS's owner-only sound controls — hardcoded-owner-ID
+    # gated, silent no-op for anyone else, hidden from !cmds.
+    if name == "tone":
+        await bot_tts.handle_tone(ctx)
+        return
+    if name == "pitch":
+        await bot_tts.handle_pitch(ctx)
+        return
+    if name == "onlytm":
+        await bot_tts.handle_only_me(ctx)
+        return
+    if name == "voiceselection":
+        await bot_tts.handle_voice_selection(ctx)
+        return
+    if name == "volume":
+        await bot_tts.handle_volume(ctx)
+        return
+
     is_builtin = name in BUILTIN_COMMANDS
     is_rp = (not is_builtin) and bot_rp.has_command(name)
     custom = None

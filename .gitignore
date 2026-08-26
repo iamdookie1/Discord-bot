@@ -5,6 +5,7 @@ rp_commands.json
 warnings.json
 server_backups.json
 guild_settings.json
+tts_settings.json
 rp_media/
 __pycache__/
 *.pyc
