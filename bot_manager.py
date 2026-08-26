@@ -12,6 +12,7 @@ import discord
 
 import bot_backup
 import bot_commands
+import bot_tts
 import guild_settings
 
 PRESENCE_TYPES = {
@@ -81,6 +82,7 @@ class BotManager:
         @self.client.event
         async def on_message(message):
             await bot_commands.handle_message(message, self.client)
+            bot_tts.maybe_enqueue(message)
 
         try:
             self.loop.run_until_complete(self.client.start(token))

@@ -21,6 +21,8 @@ import time
 
 import discord
 
+import voice_owner
+
 try:
     import nacl  # noqa: F401
     _HAS_NACL = True
@@ -325,6 +327,7 @@ def _schedule_idle_disconnect(guild: discord.Guild, voice_client: discord.VoiceC
             await asyncio.sleep(IDLE_DISCONNECT_SECONDS)
             if state.current is None and guild.voice_client:
                 await guild.voice_client.disconnect(force=True)
+                voice_owner.release(guild.id)
                 _cancel_refresh_task(state)
                 if state.menu_message:
                     try:
@@ -410,6 +413,7 @@ async def _cmd_join(ctx):
         await ctx.guild.voice_client.move_to(channel)
     else:
         vc = await channel.connect()
+        voice_owner.claim(ctx.guild.id, "music")
         _schedule_idle_disconnect(ctx.guild, vc)
     await ctx.send(f"Joined **{channel.name}**.")
 
@@ -418,6 +422,7 @@ async def _cmd_leave(ctx):
     state = _state(ctx.guild.id) if ctx.guild else None
     if ctx.guild and ctx.guild.voice_client:
         await ctx.guild.voice_client.disconnect(force=True)
+        voice_owner.release(ctx.guild.id)
         if state:
             state.queue.clear()
             state.current = None
@@ -449,6 +454,7 @@ async def _cmd_play(ctx):
             await ctx.send("Join a voice channel first, or use `!join`.")
             return
         vc = await ctx.author.voice.channel.connect()
+        voice_owner.claim(ctx.guild.id, "music")
 
     state = _state(ctx.guild.id)
     await ctx.send("Looking that up...")

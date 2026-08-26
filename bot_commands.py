@@ -41,7 +41,9 @@ import discord
 
 import bot_music
 import bot_rp
+import bot_tts
 import guild_settings
+import voice_owner
 
 # Optional: only needed for !qr / !ascii. Both are pure-Python (no native
 # build step, so they install cleanly on Termux), and the commands tell
@@ -1298,6 +1300,8 @@ BUILTIN_COMMANDS.update(UTILITY_COMMANDS)
 BUILTIN_COMMANDS.update(MODERATION_COMMANDS)
 for _name, (_desc, _handler, _perm) in bot_music.MUSIC_COMMANDS.items():
     BUILTIN_COMMANDS[_name] = CommandSpec(_desc, _handler, _perm, "music")
+for _name, (_desc, _handler, _perm) in bot_tts.TTS_COMMANDS.items():
+    BUILTIN_COMMANDS[_name] = CommandSpec(_desc, _handler, _perm, "tts")
 
 
 def name_taken(name: str) -> bool:
@@ -1456,6 +1460,8 @@ def _music_channel_block_reason(ctx: Ctx):
     clear pointer rather than silence."""
     if not ctx.guild:
         return "This only works in a server."
+    if voice_owner.get(ctx.guild.id) == "tts":
+        return "Sorry, TTS is on right now — turn it off with `!tts` first if you want music."
     channel_id = guild_settings.get_music_channel(ctx.guild.id)
     if not channel_id:
         return "No music channel has been set for this server yet — pick one from the Control Deck web UI."
