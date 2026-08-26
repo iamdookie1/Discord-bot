@@ -276,6 +276,21 @@ def music_volume():
     return jsonify(result), (200 if result.get("ok") else 400)
 
 
+@app.route("/api/music/effect", methods=["POST"])
+def music_effect():
+    data = request.get_json(force=True, silent=True) or {}
+    guild_id = data.get("guild_id", "")
+    mode = data.get("mode", "")
+
+    if bot_manager.status != "online":
+        return jsonify({"ok": False, "error": "Bot isn't connected yet."}), 400
+    if not guild_id:
+        return jsonify({"ok": False, "error": "Pick a server first."}), 400
+
+    result = bot_music.web_set_effect(bot_manager.client, guild_id, mode)
+    return jsonify(result), (200 if result.get("ok") else 400)
+
+
 # ---------------- server backup / restore (web UI only) ----------------
 
 @app.route("/api/backups")

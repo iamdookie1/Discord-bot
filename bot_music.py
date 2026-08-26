@@ -57,6 +57,13 @@ YTDLP_OPTIONS = {
     "format": "bestaudio/best",
     "noplaylist": True,
     "quiet": True,
+    "no_warnings": True,
+    # Skipping cert verification and capping the socket timeout are both
+    # safe here (we're only fetching public video metadata, not anything
+    # sensitive) and shave real time off every lookup, which matters most
+    # on a phone's mobile connection.
+    "nocheckcertificate": True,
+    "socket_timeout": 8,
     "default_search": "ytsearch",
     # A recurring YouTube-side anti-bot workaround: without this, extraction
     # can succeed but hand back a stream URL that 403s the moment ffmpeg
@@ -64,6 +71,30 @@ YTDLP_OPTIONS = {
     # matters at least as much — this alone doesn't fix an outdated version.
     "extractor_args": {"youtube": {"player_client": ["android", "web"]}},
 }
+
+# ffmpeg -af filter chains for the Music tab's effect toggle. Applied by
+# rebuilding the audio source (see _start_source) — an ffmpeg filter can't
+# be changed on an already-running process, so switching effects on the
+# currently-playing track means restarting it from its current position.
+_EFFECT_FILTERS = {
+    "nightcore": "asetrate=44100*1.25,aresample=44100",
+    "slowed_reverb": "asetrate=44100*0.8,aresample=44100,aecho=0.8:0.9:1000:0.3",
+    "bass_boost": "bass=g=12",
+    "8d": "apulsator=hz=0.09",
+}
+EFFECT_MODES = ["off", "nightcore", "slowed_reverb", "bass_boost", "8d"]
+EFFECT_LABELS = {
+    "off": "Off",
+    "nightcore": "Nightcore",
+    "slowed_reverb": "Slowed + Reverb",
+    "bass_boost": "Bass Boost",
+    "8d": "8D Audio",
+}
+
+# A prefetched stream URL older than this is discarded and re-fetched fresh
+# instead of trusted — well under the hours-long expiry YouTube stream URLs
+# normally carry, just a safety margin in case a track sits queued a while.
+PREFETCH_MAX_AGE_SECONDS = 600
 
 _SPOTIFY_TRACK_RE = re.compile(r"open\.spotify\.com/(?:intl-\w+/)?track/([A-Za-z0-9]+)")
 _SPOTIFY_OTHER_RE = re.compile(r"open\.spotify\.com/(?:intl-\w+/)?(album|playlist|artist)/([A-Za-z0-9]+)")
@@ -108,6 +139,8 @@ class GuildMusicState:
         self.refresh_task = None   # asyncio.Task ticking the menu's elapsed time
         self.idle_task = None      # asyncio.Task that disconnects after IDLE_DISCONNECT_SECONDS
         self.text_channel = None   # last text channel !play was used in — for skip/error messages
+        self.effect_mode = "off"   # off | one of EFFECT_MODES — see _EFFECT_FILTERS
+        self.pending_restart = None    # {"track":, "elapsed":} set when restarting the current track
 
 
 _states: dict[int, GuildMusicState] = {}
@@ -236,6 +269,8 @@ class MusicMenuView(discord.ui.View):
             return
         vc = guild.voice_client
         if vc and (vc.is_playing() or vc.is_paused()):
+            state = _state(guild.id)
+            state.pending_restart = None
             vc.stop()
             await interaction.response.send_message("Skipped.", ephemeral=True)
         else:
@@ -248,6 +283,7 @@ class MusicMenuView(discord.ui.View):
             return
         state = _state(guild.id)
         vc = guild.voice_client
+        state.pending_restart = None
         state.queue.clear()
         state.loop_mode = "off"
         state.current = None
@@ -411,8 +447,16 @@ async def _extract(query: str):
     def _run():
         with yt_dlp.YoutubeDL(YTDLP_OPTIONS) as ydl:
             info = ydl.extract_info(query, download=False)
-            if "entries" in info:
-                info = info["entries"][0]
+            if info and "entries" in info:
+                # A search can legitimately come back empty (typo, no
+                # matches, region-locked results all filtered out) — that's
+                # not an error condition to crash on, just nothing found.
+                entries = [e for e in (info.get("entries") or []) if e]
+                if not entries:
+                    raise ValueError(f"No results found for “{query}”.")
+                info = entries[0]
+            if not info or not info.get("url"):
+                raise ValueError(f"No results found for “{query}”.")
             return {
                 "title": info.get("title", query),
                 "url": info["url"],
@@ -423,12 +467,82 @@ async def _extract(query: str):
     return await loop.run_in_executor(None, _run)
 
 
+def _start_source(guild: discord.Guild, voice_client: discord.VoiceClient, state: "GuildMusicState",
+                   track: dict, seek_seconds: float = 0.0):
+    """Builds and starts playback for `track` (which must already have a
+    fresh "url"/"http_headers"). Shared by normal advancement, effect
+    restarts, and anything else that needs to (re)start a source."""
+    before_options = FFMPEG_OPTIONS["before_options"]
+    headers = track.get("http_headers") or {}
+    if headers:
+        header_str = "".join(f"{k}: {v}\r\n" for k, v in headers.items())
+        before_options += f' -headers "{header_str}"'
+    if seek_seconds > 0:
+        before_options += f" -ss {seek_seconds:.2f}"
+
+    options = FFMPEG_OPTIONS["options"]
+    effect_filter = _EFFECT_FILTERS.get(state.effect_mode)
+    if effect_filter:
+        options += f' -af "{effect_filter}"'
+
+    source = discord.PCMVolumeTransformer(
+        discord.FFmpegPCMAudio(track["url"], before_options=before_options, options=options),
+        volume=state.volume,
+    )
+    state.source = source
+
+    def _after(_error):
+        if state.pending_restart:
+            restart = state.pending_restart
+            state.pending_restart = None
+            fut = asyncio.run_coroutine_threadsafe(
+                _resume_after_restart(guild, voice_client, state, restart["track"], restart["elapsed"]),
+                voice_client.loop,
+            )
+        else:
+            fut = asyncio.run_coroutine_threadsafe(_play_next(guild, voice_client), voice_client.loop)
+        try:
+            fut.result()
+        except Exception:
+            pass
+
+    voice_client.play(source, after=_after)
+    if state.queue:
+        asyncio.create_task(_prefetch_next(guild.id))
+
+
+async def _prefetch_next(guild_id: int):
+    """Resolves a fresh stream URL for the next-up track ahead of time, so
+    the gap between songs is just whatever's left of _extract's latency
+    instead of the full lookup — kicked off right as the current track
+    starts, giving it the whole rest of that track to finish quietly in
+    the background."""
+    state = _states.get(guild_id)
+    if not state or not state.queue:
+        return
+    upcoming = state.queue[0]
+    if upcoming.get("_prefetch") is not None:
+        return
+    upcoming["_prefetch"] = {"status": "pending"}
+    try:
+        fresh = await _extract(upcoming["query"])
+        upcoming["_prefetch"] = {
+            "url": fresh["url"],
+            "http_headers": fresh.get("http_headers") or {},
+            "at": time.monotonic(),
+        }
+    except Exception:
+        upcoming["_prefetch"] = None
+
+
 async def _play_next(guild: discord.Guild, voice_client: discord.VoiceClient):
     state = _state(guild.id)
 
     if state.loop_mode == "track" and state.current:
+        state.current.pop("_prefetch", None)
         state.queue.insert(0, state.current)
     elif state.loop_mode == "queue" and state.current:
+        state.current.pop("_prefetch", None)
         state.queue.append(state.current)
 
     if not state.queue:
@@ -441,46 +555,61 @@ async def _play_next(guild: discord.Guild, voice_client: discord.VoiceClient):
     _cancel_idle_disconnect(state)
     track = state.queue.pop(0)
 
-    # Re-resolve right before playing rather than trusting the URL from
-    # whenever the track was queued — YouTube stream URLs expire and can
-    # 403 if fetched even a little while after they were issued, so only
-    # a URL obtained immediately before ffmpeg uses it is reliable.
-    try:
-        fresh = await _extract(track["query"])
-    except Exception:
-        if state.text_channel:
-            try:
-                await state.text_channel.send(f"Couldn't play **{track['title']}** — skipping.")
-            except discord.HTTPException:
-                pass
-        await _play_next(guild, voice_client)
-        return
+    # A prefetch resolved while the previous track was still playing saves
+    # this from having to block on a fresh lookup at all. Otherwise (no
+    # prefetch, it failed, or it's stale enough to distrust) fall back to
+    # resolving right now — same reliability guarantee as before, just not
+    # always on the critical path anymore.
+    prefetch = track.pop("_prefetch", None)
+    if prefetch and prefetch.get("url") and (time.monotonic() - prefetch.get("at", 0)) < PREFETCH_MAX_AGE_SECONDS:
+        fresh = prefetch
+    else:
+        try:
+            fresh = await _extract(track["query"])
+        except Exception:
+            if state.text_channel:
+                try:
+                    await state.text_channel.send(f"Couldn't play **{track['title']}** — skipping.")
+                except discord.HTTPException:
+                    pass
+            await _play_next(guild, voice_client)
+            return
 
     track["url"] = fresh["url"]
     track["http_headers"] = fresh.get("http_headers") or {}
     state.current = track
     _reset_position(state)
 
-    before_options = FFMPEG_OPTIONS["before_options"]
-    headers = track["http_headers"]
-    if headers:
-        header_str = "".join(f"{k}: {v}\r\n" for k, v in headers.items())
-        before_options += f' -headers "{header_str}"'
+    _start_source(guild, voice_client, state, track)
+    await _refresh_menu(guild, state)
 
-    source = discord.PCMVolumeTransformer(
-        discord.FFmpegPCMAudio(track["url"], before_options=before_options, options=FFMPEG_OPTIONS["options"]),
-        volume=state.volume,
-    )
-    state.source = source
 
-    def _after(_error):
-        fut = asyncio.run_coroutine_threadsafe(_play_next(guild, voice_client), voice_client.loop)
-        try:
-            fut.result()
-        except Exception:
-            pass
+async def _resume_after_restart(guild: discord.Guild, voice_client: discord.VoiceClient,
+                                 state: "GuildMusicState", track: dict, elapsed: float):
+    """Continuation after an internal (non-advancing) stop — e.g. an effect
+    toggle — restarts the same track from where it left off, once the old
+    player has actually finished tearing down."""
+    try:
+        fresh = await _extract(track["query"])
+    except Exception:
+        if state.text_channel:
+            try:
+                await state.text_channel.send(f"Couldn't reapply that to **{track['title']}** — stopped.")
+            except discord.HTTPException:
+                pass
+        state.current = None
+        state.source = None
+        await _refresh_menu(guild, state)
+        return
 
-    voice_client.play(source, after=_after)
+    track["url"] = fresh["url"]
+    track["http_headers"] = fresh.get("http_headers") or {}
+    state.current = track
+    state.position = elapsed
+    state.resumed_at = time.monotonic()
+    state.is_paused = False
+
+    _start_source(guild, voice_client, state, track, seek_seconds=elapsed)
     await _refresh_menu(guild, state)
 
 
@@ -522,6 +651,8 @@ async def _cmd_join(ctx):
 async def _cmd_leave(ctx):
     state = _state(ctx.guild.id) if ctx.guild else None
     if ctx.guild and ctx.guild.voice_client:
+        if state:
+            state.pending_restart = None
         await ctx.guild.voice_client.disconnect(force=True)
         voice_owner.release(ctx.guild.id)
         if state:
@@ -546,7 +677,7 @@ async def _cmd_play(ctx):
         await ctx.send("This only works in a server.")
         return
     if not ctx.content:
-        await ctx.send("Usage: `!play <song name, YouTube link, or Spotify track link>`")
+        await ctx.send("Usage: `!play <song name, e.g. \"Song Title by Artist\">`, a YouTube link, or a Spotify track link")
         return
 
     vc = ctx.guild.voice_client
@@ -612,7 +743,10 @@ async def _cmd_resume(ctx):
 
 async def _cmd_skip(ctx):
     vc = ctx.guild.voice_client if ctx.guild else None
+    state = _state(ctx.guild.id) if ctx.guild else None
     if vc and (vc.is_playing() or vc.is_paused()):
+        if state:
+            state.pending_restart = None
         vc.stop()  # triggers _after -> _play_next
         await ctx.send("Skipped.")
     else:
@@ -623,6 +757,7 @@ async def _cmd_stop(ctx):
     vc = ctx.guild.voice_client if ctx.guild else None
     state = _state(ctx.guild.id) if ctx.guild else None
     if vc and state:
+        state.pending_restart = None
         state.queue.clear()
         state.loop_mode = "off"
         state.current = None
@@ -652,7 +787,7 @@ async def _cmd_queue(ctx):
 MUSIC_COMMANDS = {
     "join": ("Joins the server's configured music voice channel.", _cmd_join, None),
     "leave": ("Leaves the voice channel.", _cmd_leave, None),
-    "play": ("Plays a song by name, YouTube link, or Spotify track link (queues if already playing).", _cmd_play, None),
+    "play": ("Plays a song by name (optionally \"by <artist>\"), YouTube link, or Spotify track link — queues if already playing.", _cmd_play, None),
     "menu": ("Shows the interactive now-playing menu.", _cmd_menu, None),
     "pause": ("Pauses the current track.", _cmd_pause, None),
     "resume": ("Resumes the paused track.", _cmd_resume, None),
@@ -680,6 +815,8 @@ def get_state_dict(client: discord.Client, guild_id: str) -> dict:
         "duration": track.get("duration") if track else None,
         "volume": round(state.volume * 100),
         "loop_mode": state.loop_mode,
+        "effect_mode": state.effect_mode,
+        "effect_modes": [{"id": m, "label": EFFECT_LABELS[m]} for m in EFFECT_MODES],
         "queue": [t["title"] for t in state.queue[:10]],
         "queue_length": len(state.queue),
     }
@@ -730,6 +867,8 @@ def web_skip(client: discord.Client, guild_id: str) -> dict:
     vc = guild.voice_client if guild else None
     if not (vc and (vc.is_playing() or vc.is_paused())):
         return {"ok": False, "error": "Nothing is playing."}
+    state = _state(int(guild_id))
+    state.pending_restart = None
     vc.stop()
     return {"ok": True}
 
@@ -740,6 +879,7 @@ def web_stop(client: discord.Client, guild_id: str) -> dict:
     state = _state(int(guild_id))
     if not vc:
         return {"ok": False, "error": "I'm not in a voice channel."}
+    state.pending_restart = None
     state.queue.clear()
     state.loop_mode = "off"
     state.current = None
@@ -762,3 +902,24 @@ def web_loop_cycle(client: discord.Client, guild_id: str) -> dict:
     state.loop_mode = LOOP_MODES[(LOOP_MODES.index(state.loop_mode) + 1) % len(LOOP_MODES)]
     _nudge_menu(client, int(guild_id))
     return {"ok": True, "loop_mode": state.loop_mode}
+
+
+def web_set_effect(client: discord.Client, guild_id: str, mode: str) -> dict:
+    """Changes the effect for future tracks, and — if something's playing
+    right now — restarts it in place (same track, same position) so the
+    change is heard immediately instead of only from the next song on."""
+    if mode not in EFFECT_MODES:
+        return {"ok": False, "error": "Unknown effect mode."}
+    guild = client.get_guild(int(guild_id)) if client else None
+    state = _state(int(guild_id))
+    if mode == state.effect_mode:
+        return {"ok": True, "effect_mode": mode}
+    state.effect_mode = mode
+
+    vc = guild.voice_client if guild else None
+    if not vc or not state.current or state.pending_restart:
+        return {"ok": True, "effect_mode": mode}
+
+    state.pending_restart = {"track": state.current, "elapsed": _elapsed(state)}
+    vc.stop()
+    return {"ok": True, "effect_mode": mode}
