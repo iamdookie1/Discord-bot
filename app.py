@@ -7,6 +7,7 @@ import bot_backup
 import bot_commands
 import bot_music
 import bot_rp
+import guild_settings
 from bot_manager import bot_manager
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -402,6 +403,64 @@ def commands_custom_toggle(name):
 def commands_custom_delete(name):
     ok = bot_commands.delete_custom_command(name.strip().lower())
     return jsonify({"ok": ok})
+
+
+# ---------------- server settings (music channel, mod-log channel) ----------------
+# Not RP's allowed channel — that one is intentionally chat-only, owner-ID
+# gated, with no web control. See bot_rp.py.
+
+@app.route("/api/guild_settings", methods=["GET"])
+def get_guild_settings():
+    guild_id = request.args.get("guild_id", "")
+    if not guild_id:
+        return jsonify({"music_channel": None, "modlog_channel": None})
+    s = guild_settings.get_settings(guild_id)
+    return jsonify({"music_channel": s["music_channel"], "modlog_channel": s["modlog_channel"]})
+
+
+@app.route("/api/guild_settings", methods=["POST"])
+def set_guild_settings():
+    data = request.get_json(force=True, silent=True) or {}
+    guild_id = data.get("guild_id", "")
+    if not guild_id:
+        return jsonify({"ok": False, "error": "Pick a server first."}), 400
+    if "music_channel" in data:
+        val = data["music_channel"]
+        guild_settings.set_music_channel(guild_id, int(val) if val else None)
+    if "modlog_channel" in data:
+        val = data["modlog_channel"]
+        guild_settings.set_modlog_channel(guild_id, int(val) if val else None)
+    return jsonify({"ok": True})
+
+
+# ---------------- moderation panel (web UI) ----------------
+
+@app.route("/api/moderation/warnings", methods=["GET"])
+def moderation_warnings():
+    guild_id = request.args.get("guild_id", "")
+    user_id = request.args.get("user_id", "")
+    if not (guild_id and user_id):
+        return jsonify([])
+    key = f"{guild_id}:{user_id}"
+    return jsonify(bot_commands._load_warnings().get(key, []))
+
+
+@app.route("/api/moderation/action", methods=["POST"])
+def moderation_action():
+    data = request.get_json(force=True, silent=True) or {}
+    guild_id = data.get("guild_id", "")
+    user_id = data.get("user_id", "")
+    action = data.get("action", "")
+    reason = (data.get("reason") or "").strip()
+    minutes = data.get("minutes")
+
+    if bot_manager.status != "online":
+        return jsonify({"ok": False, "error": "Bot isn't connected yet."}), 400
+    if not (guild_id and user_id and action):
+        return jsonify({"ok": False, "error": "Pick a server, a user, and an action."}), 400
+
+    result = bot_manager.moderate_member(guild_id, user_id, action, reason=reason, minutes=minutes)
+    return jsonify(result), (200 if result.get("ok") else 400)
 
 
 # ---------------- roleplay (rp) commands ----------------

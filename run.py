@@ -39,6 +39,8 @@ EXTRA_PACKAGES = [
     ("nacl", "PyNaCl"),
     ("davey", "davey"),
     ("yt_dlp", "yt-dlp"),
+    ("qrcode", "qrcode"),
+    ("pyfiglet", "pyfiglet"),
 ]
 
 

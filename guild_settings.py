@@ -13,6 +13,8 @@ GUILD_SETTINGS_PATH = os.path.join(BASE_DIR, "guild_settings.json")
 _DEFAULTS = {
     "rp_channel": None,
     "music_channel": None,
+    "modlog_channel": None,
+    "mute_role": None,
 }
 
 
@@ -62,3 +64,19 @@ def get_music_channel(guild_id):
 
 def set_music_channel(guild_id, channel_id):
     set_setting(guild_id, "music_channel", channel_id)
+
+
+def get_modlog_channel(guild_id):
+    return get_settings(guild_id).get("modlog_channel")
+
+
+def set_modlog_channel(guild_id, channel_id):
+    set_setting(guild_id, "modlog_channel", channel_id)
+
+
+def get_mute_role(guild_id):
+    return get_settings(guild_id).get("mute_role")
+
+
+def set_mute_role(guild_id, role_id):
+    set_setting(guild_id, "mute_role", role_id)

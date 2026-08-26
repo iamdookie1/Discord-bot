@@ -8,13 +8,13 @@ local web UI at `http://127.0.0.1:5000` instead of the command line.
 - `setup.sh` — Termux system-package check (installs anything missing), then launches the app
 - `run.py` — checks/installs the required **Python** packages, then starts the server
 - `app.py` — the Flask app: all the `/api/...` routes the UI talks to
-- `bot_manager.py` — runs the actual discord.py client in the background
+- `bot_manager.py` — runs the actual discord.py client in the background, plus the web moderation panel's actions (kick/ban/timeout/warn/etc., mirroring the chat commands)
 - `bot_commands.py` — utility + moderation `!commands`, on/off toggle storage, per-user command cooldowns, and the custom-command sandbox
 - `bot_music.py` — the `!join`/`!play`/`!menu`/... voice commands, the interactive now-playing menu, and playback state
 - `bot_rp.py` — the `!kiss`/`!hug`/... roleplay commands, their GIF storage, and the owner-gated channel lockdown
-- `guild_settings.py` — per-server settings (currently just the RP-allowed channel), keyed by guild ID
+- `guild_settings.py` — per-server settings (RP-allowed channel, music channel, mod-log channel, mute role), keyed by guild ID
 - `bot_backup.py` — server structure snapshot/restore for the Backup tab (web UI only, no chat command)
-- `templates/`, `static/` — the UI (Home, Text, Bot, Cmds, Custom, RP, Backup tabs)
+- `templates/`, `static/` — the UI (Home, Text, Bot, Cmds, Mod, Custom, RP, Backup tabs)
 - `config.json` — created automatically the first time you save a token or set a presence (kept only on your device)
 - `custom_commands.json`, `command_settings.json`, `rp_commands.json`, `warnings.json`, `server_backups.json`, `guild_settings.json` — created automatically as you use the app (all kept only on your device, none of it committed to git)
 - `rp_media/` — GIFs/images/converted videos uploaded from the RP tab, created automatically (kept only on your device, never committed to git)
@@ -67,10 +67,10 @@ Open `http://127.0.0.1:5000` in your phone's browser.
 - Choose an image and hit **Update profile picture** to change the bot's avatar
 - **Presence**: set what shows under the bot's name in the member list (Playing/Watching/Listening to/Competing in + text). Saved and reapplied automatically every time the bot connects.
 
-**Cmds tab** — 61 built-in commands across three categories, each with an on/off toggle, plus a search box to find one quickly:
-- **Utility** (27): `!ping`, `!cmds`/`!help`, `!uptime`, `!avatar`, `!userinfo`, `!serverinfo`, `!say` (also deletes your original message), `!coinflip`, `!roll`, `!8ball`, `!time`, `!calc`, `!choose`, `!reverse`, `!remind`, `!password`, `!uuid`, `!base64`, `!hash`, `!color`, `!timestamp`, `!invite`, `!poll`, `!channelinfo`, `!roleinfo`, `!permissions`
-- **Moderation** (25): `!kick`, `!ban`, `!softban`, `!unban`, `!timeout`, `!untimeout`, `!warn`, `!warnings`, `!clearwarnings`, `!purge`, `!slowmode`, `!lock`, `!unlock`, `!nick`, `!addrole`, `!removerole`, `!createrole`, `!deleterole`, `!purgeuser`, `!banid`, `!announce`, `!pin`, `!unpin`, `!clearnick`, `!banlist` — every one of these checks the caller has the matching Discord permission (and that the bot does too) before running anything, and refuses with a clear message if not
-- **Music** (9): `!join`, `!leave`, `!play`, `!menu`, `!pause`, `!resume`, `!skip`, `!stop`, `!queue` — needs the `ffmpeg` binary, `PyNaCl` (voice encryption), and `davey` (Discord's now-mandatory DAVE end-to-end voice encryption, required since March 2026); `setup.sh` tries to install all of it automatically on Termux, but if any piece is missing `!play` tells you instead of failing silently. `!play` (and `!menu`) show an interactive now-playing menu — see below.
+**Cmds tab** — 75 built-in commands across three categories, each with an on/off toggle, plus a search box to find one quickly. Info-style commands (`!userinfo`, `!serverinfo`, `!roleinfo`, `!permissions`, `!channelinfo`, `!warnings`, `!banlist`, `!avatar`, `!poll`) reply with an embed in the app's own accent color rather than plain text:
+- **Utility** (35): `!ping`, `!cmds`/`!help`, `!uptime`, `!avatar`, `!userinfo`, `!serverinfo`, `!say` (also deletes your original message), `!coinflip`, `!roll`, `!8ball`, `!time`, `!calc`, `!choose`, `!reverse`, `!remind`, `!remindlist`, `!remindcancel`, `!password`, `!uuid`, `!base64`, `!hash`, `!color`, `!timestamp`, `!invite`, `!poll`, `!channelinfo`, `!roleinfo`, `!permissions`, `!snowflake` (decode a Discord ID's timestamp), `!membercount`, `!servericon`, `!emojis`, `!qr` (text-rendered QR code), `!ascii` (text banner, needs `pyfiglet`)
+- **Moderation** (31): `!kick`, `!ban`, `!softban`, `!unban`, `!timeout`, `!untimeout`, `!warn`, `!warnings`, `!clearwarnings`, `!warnremove`, `!purge`, `!slowmode`, `!lock`, `!unlock`, `!nick`, `!addrole`, `!removerole`, `!createrole`, `!deleterole`, `!purgeuser`, `!banid`, `!announce`, `!pin`, `!unpin`, `!clearnick`, `!banlist`, `!setmodlog`, `!muterole`, `!mute`, `!unmute`, `!tempban` — every one of these checks the caller has the matching Discord permission (and that the bot does too) before running anything, and refuses with a clear message if not. Kicks, bans, softbans, timeouts, warns, mutes, and tempbans also get posted as an embed to the server's mod-log channel (`!setmodlog #channel`), if one's been set — same for the equivalent actions run from the **Mod** tab.
+- **Music** (9): `!join`, `!leave`, `!play`, `!menu`, `!pause`, `!resume`, `!skip`, `!stop`, `!queue` — needs the `ffmpeg` binary, `PyNaCl` (voice encryption), and `davey` (Discord's now-mandatory DAVE end-to-end voice encryption, required since March 2026); `setup.sh` tries to install all of it automatically on Termux, but if any piece is missing `!play` tells you instead of failing silently. `!play` (and `!menu`) show an interactive now-playing menu — see below. Every music command also needs a channel set for that server on the **Mod** tab — with none set, they're fully blocked (not just unrestricted), and in the wrong channel they point you to the right one.
 - **Requires "Message Content Intent" turned on** for your bot in the Developer Portal (**Bot** page) — without it, discord.py can't read what people type, so no `!command` will ever trigger. This is separate from the token and has to be flipped on manually per-bot.
 - Every command, of every kind (built-in, RP, custom), has a 3-second per-user cooldown — spamming one just gets silently ignored until the cooldown clears.
 
@@ -80,6 +80,12 @@ Open `http://127.0.0.1:5000` in your phone's browser.
 - Only works for whoever's in the same voice channel as the bot, to stop randoms in other channels from taking over
 - The embed itself only re-renders every 5 seconds (Discord rate-limits message edits harder than that), but any button press updates it immediately regardless of that timer
 - The bot auto-disconnects after 5 minutes with nothing playing
+
+**Mod tab**
+- **Music channel**: pick the one channel per server music commands are allowed in. With nothing picked, music commands are fully blocked there — not just unrestricted.
+- **Mod-log channel**: optional — pick a channel to have kicks/bans/timeouts/warns/mutes/tempbans posted there as an embed, whether they came from chat commands or from this panel.
+- **Moderate a member**: paste a user ID (not a picker — the bot doesn't request the privileged Members intent, so a full member list isn't reliably available) and hit Kick / Ban / Timeout / Warn / Clear warnings / Reset nickname. Kick and Ban ask for confirmation first. A user ID's current warnings show automatically once you tab out of the field.
+- This is the same underlying logic as the equivalent chat commands — just triggerable from the browser instead of Discord.
 
 **Custom tab**
 - Create your own `!command` in Python. The code you write runs as the body of `async def run(ctx): ...`, where `ctx` gives you `ctx.send(...)` to reply, `ctx.args` (the words after the command), `ctx.content` (the raw text after it), and `ctx.message` / `ctx.author` / `ctx.channel` / `ctx.guild` as normal discord.py objects.
