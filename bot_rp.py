@@ -257,7 +257,7 @@ async def handle(name: str, ctx):
         verb = BUILTIN_RP_ACTIONS.get(name, (name + "s",))[0]
         text = f"**{ctx.author.display_name}** {verb} **{target.display_name}**!"
 
-    embed = discord.Embed(description=text)
+    embed = discord.Embed(description=text, color=discord.Color(0xFFB454))
 
     if gif.startswith(LOCAL_PREFIX):
         filename = gif[len(LOCAL_PREFIX):]

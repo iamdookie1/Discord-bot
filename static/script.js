@@ -26,6 +26,7 @@ tabs.forEach((tab) => {
       refreshBackupServers();
       loadBackupList();
     }
+    if (tab.dataset.tab === "mod") refreshModServers();
   });
 });
 
@@ -1173,6 +1174,143 @@ loadBackupBtn.addEventListener("click", async () => {
     setMsg(loadBackupMsg, data.error || "Couldn't load that backup.", "error");
   }
 });
+
+// ---------- mod tab ----------
+
+const modServerSelect = document.getElementById("modServerSelect");
+const modMusicChannelSelect = document.getElementById("modMusicChannelSelect");
+const saveMusicChannelBtn = document.getElementById("saveMusicChannelBtn");
+const musicChannelMsg = document.getElementById("musicChannelMsg");
+const modLogChannelSelect = document.getElementById("modLogChannelSelect");
+const saveModLogChannelBtn = document.getElementById("saveModLogChannelBtn");
+const modLogChannelMsg = document.getElementById("modLogChannelMsg");
+const modUserIdInput = document.getElementById("modUserIdInput");
+const modReasonInput = document.getElementById("modReasonInput");
+const modMinutesInput = document.getElementById("modMinutesInput");
+const modActionMsg = document.getElementById("modActionMsg");
+const modWarningsList = document.getElementById("modWarningsList");
+
+async function refreshModServers() {
+  const guilds = await api("/api/guilds");
+  const current = modServerSelect.value;
+  if (!guilds.length) {
+    modServerSelect.innerHTML = '<option value="">No servers found (is the bot online + invited?)</option>';
+    return;
+  }
+  modServerSelect.innerHTML =
+    '<option value="">Choose a server&hellip;</option>' +
+    guilds.map((g) => `<option value="${g.id}">${escapeHtml(g.name)}</option>`).join("");
+  if (current) modServerSelect.value = current;
+  await refreshModChannels();
+  await loadGuildSettings();
+}
+
+async function refreshModChannels() {
+  const guildId = modServerSelect.value;
+  if (!guildId) {
+    modMusicChannelSelect.innerHTML = '<option value="">Pick a server first&hellip;</option>';
+    modLogChannelSelect.innerHTML = '<option value="">Pick a server first&hellip;</option>';
+    return;
+  }
+  const channels = await api(`/api/channels?guild_id=${encodeURIComponent(guildId)}`);
+  const options = '<option value="">None</option>' +
+    channels.map((c) => `<option value="${c.id}">#${escapeHtml(c.name)}</option>`).join("");
+  modMusicChannelSelect.innerHTML = options;
+  modLogChannelSelect.innerHTML = options;
+}
+
+async function loadGuildSettings() {
+  const guildId = modServerSelect.value;
+  if (!guildId) return;
+  const s = await api(`/api/guild_settings?guild_id=${encodeURIComponent(guildId)}`);
+  if (s.music_channel) modMusicChannelSelect.value = String(s.music_channel);
+  if (s.modlog_channel) modLogChannelSelect.value = String(s.modlog_channel);
+}
+
+modServerSelect.addEventListener("change", async () => {
+  await refreshModChannels();
+  await loadGuildSettings();
+});
+
+saveMusicChannelBtn.addEventListener("click", async () => {
+  const guildId = modServerSelect.value;
+  if (!guildId) {
+    setMsg(musicChannelMsg, "Pick a server first.", "error");
+    return;
+  }
+  const data = await api("/api/guild_settings", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ guild_id: guildId, music_channel: modMusicChannelSelect.value || null }),
+  });
+  setMsg(musicChannelMsg, data.ok ? "Saved." : (data.error || "Couldn't save."), data.ok ? "success" : "error");
+});
+
+saveModLogChannelBtn.addEventListener("click", async () => {
+  const guildId = modServerSelect.value;
+  if (!guildId) {
+    setMsg(modLogChannelMsg, "Pick a server first.", "error");
+    return;
+  }
+  const data = await api("/api/guild_settings", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ guild_id: guildId, modlog_channel: modLogChannelSelect.value || null }),
+  });
+  setMsg(modLogChannelMsg, data.ok ? "Saved." : (data.error || "Couldn't save."), data.ok ? "success" : "error");
+});
+
+async function refreshModWarnings() {
+  const guildId = modServerSelect.value;
+  const userId = modUserIdInput.value.trim();
+  if (!guildId || !userId) {
+    modWarningsList.textContent = "Enter a user ID above to check.";
+    return;
+  }
+  const entries = await api(`/api/moderation/warnings?guild_id=${encodeURIComponent(guildId)}&user_id=${encodeURIComponent(userId)}`);
+  if (!entries.length) {
+    modWarningsList.textContent = "No warnings.";
+    return;
+  }
+  modWarningsList.innerHTML = entries.map((e, i) => `${i + 1}. ${escapeHtml(e.reason)} (by ${escapeHtml(e.by)})`).join("<br>");
+}
+
+modUserIdInput.addEventListener("blur", refreshModWarnings);
+
+async function runModAction(action, { confirmText, needsMinutes } = {}) {
+  const guildId = modServerSelect.value;
+  const userId = modUserIdInput.value.trim();
+  if (!guildId || !userId) {
+    setMsg(modActionMsg, "Pick a server and enter a user ID first.", "error");
+    return;
+  }
+  if (confirmText && !confirm(confirmText)) return;
+
+  const body = { guild_id: guildId, user_id: userId, action, reason: modReasonInput.value.trim() };
+  if (needsMinutes) body.minutes = parseInt(modMinutesInput.value, 10) || 10;
+
+  setMsg(modActionMsg, "Working...", "");
+  const data = await api("/api/moderation/action", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  setMsg(modActionMsg, data.ok ? "Done." : (data.error || "Couldn't do that."), data.ok ? "success" : "error");
+  if (data.ok && (action === "warn" || action === "clearwarnings")) refreshModWarnings();
+}
+
+document.getElementById("modKickBtn").addEventListener("click", () =>
+  runModAction("kick", { confirmText: "Kick this member?" }));
+document.getElementById("modBanBtn").addEventListener("click", () =>
+  runModAction("ban", { confirmText: "Ban this member? This can't be easily undone." }));
+document.getElementById("modTimeoutBtn").addEventListener("click", () =>
+  runModAction("timeout", { needsMinutes: true }));
+document.getElementById("modWarnBtn").addEventListener("click", () =>
+  runModAction("warn"));
+document.getElementById("modClearWarningsBtn").addEventListener("click", () =>
+  runModAction("clearwarnings", { confirmText: "Clear all warnings for this member?" }));
+document.getElementById("modClearNickBtn").addEventListener("click", () =>
+  runModAction("clearnick"));
 
 // ---------- init ----------
 

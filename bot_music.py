@@ -143,7 +143,7 @@ def _build_embed(state: GuildMusicState) -> discord.Embed:
 
     elapsed = _elapsed(state)
     duration = track.get("duration")
-    embed = discord.Embed(title="🎵 Now Playing", description=f"**{track['title']}**", color=discord.Color.blurple())
+    embed = discord.Embed(title="🎵 Now Playing", description=f"**{track['title']}**", color=discord.Color(0xFFB454))
 
     bar = _progress_bar(elapsed, duration)
     if bar:

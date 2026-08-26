@@ -5,12 +5,14 @@ talk to it through the thread-safe methods below (start, stop, get_guilds,
 get_channels, send_message).
 """
 import asyncio
+import datetime
 import threading
 
 import discord
 
 import bot_backup
 import bot_commands
+import guild_settings
 
 PRESENCE_TYPES = {
     "playing": discord.ActivityType.playing,
@@ -230,6 +232,80 @@ class BotManager:
 
         result = self._run_coro(_load(), default=None, timeout=180)
         return result or {"ok": False, "error": "Bot isn't connected."}
+
+    # ---------- moderation (Control Deck web panel) ----------
+
+    def moderate_member(self, guild_id: str, user_id: str, action: str, reason: str = "", minutes=None) -> dict:
+        """Same underlying actions as the chat moderation commands, but
+        triggered from the web UI instead of a Discord message — used by
+        the Cmds tab's moderation panel. Logs to the server's mod-log
+        channel too, same as the chat versions."""
+        async def _do():
+            guild = self.client.get_guild(int(guild_id))
+            if not guild:
+                return {"ok": False, "error": "Server not found — is the bot still in it?"}
+            try:
+                member = guild.get_member(int(user_id)) or await guild.fetch_member(int(user_id))
+            except discord.NotFound:
+                return {"ok": False, "error": "That user isn't a member of this server."}
+            except (discord.HTTPException, ValueError) as exc:
+                return {"ok": False, "error": f"Couldn't find that member: {exc}"}
+
+            log_reason = reason or None
+            try:
+                if action == "kick":
+                    await member.kick(reason=log_reason)
+                elif action == "ban":
+                    await member.ban(reason=log_reason, delete_message_days=0)
+                elif action == "timeout":
+                    mins = max(1, min(int(minutes or 10), 40320))
+                    await member.timeout(datetime.timedelta(minutes=mins), reason=log_reason)
+                    log_reason = f"{mins} minute(s)" + (f" — {reason}" if reason else "")
+                elif action == "clearnick":
+                    await member.edit(nick=None)
+                elif action == "warn":
+                    key = f"{guild.id}:{member.id}"
+                    data = bot_commands._load_warnings()
+                    data.setdefault(key, []).append({
+                        "reason": reason or "No reason given.",
+                        "by": "Control Deck (web)",
+                        "at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                    })
+                    bot_commands._save_warnings(data)
+                elif action == "clearwarnings":
+                    key = f"{guild.id}:{member.id}"
+                    data = bot_commands._load_warnings()
+                    data.pop(key, None)
+                    bot_commands._save_warnings(data)
+                else:
+                    return {"ok": False, "error": "Unknown action."}
+            except discord.Forbidden:
+                return {"ok": False, "error": "I don't have permission to do that (role hierarchy?)."}
+            except discord.HTTPException as exc:
+                return {"ok": False, "error": f"Discord rejected that: {exc.text}"}
+
+            await _post_modlog(guild, action.title(), member, log_reason)
+            return {"ok": True}
+
+        result = self._run_coro(_do(), default=None)
+        return result or {"ok": False, "error": "Bot isn't connected."}
+
+
+async def _post_modlog(guild, action_name: str, target, reason=None):
+    channel_id = guild_settings.get_modlog_channel(guild.id)
+    if not channel_id:
+        return
+    channel = guild.get_channel(channel_id)
+    if not channel:
+        return
+    description = f"**Target:** {target}\n**By:** Control Deck (web)"
+    if reason:
+        description += f"\n**Reason:** {reason}"
+    embed = discord.Embed(title=action_name, description=description, color=discord.Color(0xFFB454))
+    try:
+        await channel.send(embed=embed)
+    except discord.HTTPException:
+        pass
 
 
 def _parse_color(value) -> "discord.Color":

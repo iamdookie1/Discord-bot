@@ -41,6 +41,20 @@ import discord
 
 import bot_music
 import bot_rp
+import guild_settings
+
+# Optional: only needed for !qr / !ascii. Both are pure-Python (no native
+# build step, so they install cleanly on Termux), and the commands tell
+# the user what's missing instead of crashing if either isn't installed.
+try:
+    import qrcode
+except ImportError:
+    qrcode = None
+
+try:
+    import pyfiglet
+except ImportError:
+    pyfiglet = None
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CUSTOM_COMMANDS_PATH = os.path.join(BASE_DIR, "custom_commands.json")
@@ -79,6 +93,7 @@ PERM_LABELS = {
     "manage_channels": "Manage Channels",
     "manage_nicknames": "Manage Nicknames",
     "manage_roles": "Manage Roles",
+    "manage_guild": "Manage Server",
 }
 
 
@@ -123,6 +138,14 @@ def _resolve_role(ctx: Ctx, text: str):
     return discord.utils.find(lambda r: r.name.lower() == text.lower(), ctx.guild.roles)
 
 
+# Shared brand color for embeds — matches the web UI's --accent.
+EMBED_COLOR = discord.Color(0xFFB454)
+
+
+def _embed(*, title=None, description=None, **kwargs) -> discord.Embed:
+    return discord.Embed(title=title, description=description, color=EMBED_COLOR, **kwargs)
+
+
 # ==================== utility commands ====================
 
 async def _cmd_ping(ctx: Ctx):
@@ -149,13 +172,21 @@ async def _cmd_uptime(ctx: Ctx):
 
 async def _cmd_avatar(ctx: Ctx):
     target = ctx.message.mentions[0] if ctx.message.mentions else ctx.author
-    await ctx.send(str(target.display_avatar.url))
+    embed = _embed(title=f"{target.display_name}'s avatar")
+    embed.set_image(url=target.display_avatar.url)
+    await ctx.send(embed=embed)
 
 
 async def _cmd_userinfo(ctx: Ctx):
     target = ctx.message.mentions[0] if ctx.message.mentions else ctx.author
-    created = target.created_at.strftime("%Y-%m-%d")
-    await ctx.send(f"**{target}**\nID: `{target.id}`\nAccount created: `{created}`")
+    embed = _embed(title=str(target))
+    embed.set_thumbnail(url=target.display_avatar.url)
+    embed.add_field(name="ID", value=f"`{target.id}`", inline=True)
+    embed.add_field(name="Account created", value=target.created_at.strftime("%Y-%m-%d"), inline=True)
+    joined_at = getattr(target, "joined_at", None)
+    if joined_at:
+        embed.add_field(name="Joined this server", value=joined_at.strftime("%Y-%m-%d"), inline=True)
+    await ctx.send(embed=embed)
 
 
 async def _cmd_serverinfo(ctx: Ctx):
@@ -163,7 +194,13 @@ async def _cmd_serverinfo(ctx: Ctx):
     if not g:
         await ctx.send("This only works in a server.")
         return
-    await ctx.send(f"**{g.name}**\nID: `{g.id}`\nMembers: `{g.member_count}`\nOwner: `{g.owner}`")
+    embed = _embed(title=g.name)
+    if g.icon:
+        embed.set_thumbnail(url=g.icon.url)
+    embed.add_field(name="ID", value=f"`{g.id}`", inline=True)
+    embed.add_field(name="Members", value=f"`{g.member_count}`", inline=True)
+    embed.add_field(name="Owner", value=str(g.owner), inline=True)
+    await ctx.send(embed=embed)
 
 
 async def _cmd_say(ctx: Ctx):
@@ -273,6 +310,12 @@ async def _cmd_reverse(ctx: Ctx):
     await ctx.send(ctx.content[::-1])
 
 
+# In-memory only — reminders don't survive a restart, same as before
+# !remindlist/!remindcancel existed. id -> {user_id, text, fire_at, task}.
+_active_reminders = {}
+_reminder_ids = itertools.count(1)
+
+
 async def _cmd_remind(ctx: Ctx):
     if not ctx.args:
         await ctx.send("Usage: `!remind <minutes> <text>`")
@@ -284,16 +327,51 @@ async def _cmd_remind(ctx: Ctx):
         return
     minutes = max(0.1, min(minutes, 1440))
     text = " ".join(ctx.args[1:]) or "⏰"
-    await ctx.send(f"Okay, I'll remind you in {minutes:g} minute(s).")
+    reminder_id = next(_reminder_ids)
+    fire_at = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=minutes)
+    await ctx.send(f"Okay, I'll remind you in {minutes:g} minute(s). (id `{reminder_id}`, see `!remindlist`/`!remindcancel`)")
 
     async def _fire():
-        await asyncio.sleep(minutes * 60)
         try:
+            await asyncio.sleep(minutes * 60)
             await ctx.channel.send(f"{ctx.author.mention} reminder: {text}")
+        except asyncio.CancelledError:
+            pass
         except discord.HTTPException:
             pass
+        finally:
+            _active_reminders.pop(reminder_id, None)
 
-    asyncio.create_task(_fire())
+    task = asyncio.create_task(_fire())
+    _active_reminders[reminder_id] = {"user_id": ctx.author.id, "text": text, "fire_at": fire_at, "task": task}
+
+
+async def _cmd_remindlist(ctx: Ctx):
+    mine = sorted((rid, r) for rid, r in _active_reminders.items() if r["user_id"] == ctx.author.id)
+    if not mine:
+        await ctx.send("You have no active reminders.")
+        return
+    lines = [f"`{rid}` — {r['text']} (<t:{int(r['fire_at'].timestamp())}:R>)" for rid, r in mine]
+    embed = _embed(title="Your reminders", description="\n".join(lines))
+    await ctx.send(embed=embed)
+
+
+async def _cmd_remindcancel(ctx: Ctx):
+    if not ctx.args:
+        await ctx.send("Usage: `!remindcancel <id>` — see `!remindlist` for IDs")
+        return
+    try:
+        reminder_id = int(ctx.args[0])
+    except ValueError:
+        await ctx.send("That doesn't look like a reminder ID.")
+        return
+    entry = _active_reminders.get(reminder_id)
+    if not entry or entry["user_id"] != ctx.author.id:
+        await ctx.send("No reminder with that ID belongs to you.")
+        return
+    entry["task"].cancel()
+    _active_reminders.pop(reminder_id, None)
+    await ctx.send(f"Cancelled reminder `{reminder_id}`.")
 
 
 async def _cmd_password(ctx: Ctx):
@@ -395,7 +473,7 @@ async def _cmd_poll(ctx: Ctx):
         return
     question, options = parts[0], parts[1:11]
     lines = [f"{_POLL_NUMBER_EMOJIS[i]} {opt}" for i, opt in enumerate(options)]
-    embed = discord.Embed(title=question, description="\n".join(lines), color=discord.Color.blurple())
+    embed = _embed(title=question, description="\n".join(lines))
     msg = await ctx.send(embed=embed)
     for i in range(len(options)):
         try:
@@ -406,14 +484,16 @@ async def _cmd_poll(ctx: Ctx):
 
 async def _cmd_channelinfo(ctx: Ctx):
     ch = ctx.channel
-    lines = [f"**#{getattr(ch, 'name', 'this channel')}**", f"ID: `{ch.id}`", f"Type: `{ch.type}`"]
+    embed = _embed(title=f"#{getattr(ch, 'name', 'this channel')}")
+    embed.add_field(name="ID", value=f"`{ch.id}`", inline=True)
+    embed.add_field(name="Type", value=f"`{ch.type}`", inline=True)
     if getattr(ch, "topic", None):
-        lines.append(f"Topic: {ch.topic}")
+        embed.add_field(name="Topic", value=ch.topic, inline=False)
     if hasattr(ch, "nsfw"):
-        lines.append(f"NSFW: `{ch.nsfw}`")
+        embed.add_field(name="NSFW", value=f"`{ch.nsfw}`", inline=True)
     if hasattr(ch, "slowmode_delay"):
-        lines.append(f"Slowmode: `{ch.slowmode_delay}s`")
-    await ctx.send("\n".join(lines))
+        embed.add_field(name="Slowmode", value=f"`{ch.slowmode_delay}s`", inline=True)
+    await ctx.send(embed=embed)
 
 
 async def _cmd_roleinfo(ctx: Ctx):
@@ -424,15 +504,13 @@ async def _cmd_roleinfo(ctx: Ctx):
     if not role:
         await ctx.send("Usage: `!roleinfo <role name or @role>`")
         return
-    lines = [
-        f"**{role.name}**",
-        f"ID: `{role.id}`",
-        f"Color: `{role.color}`",
-        f"Members: `{len(role.members)}`",
-        f"Mentionable: `{role.mentionable}`",
-        f"Hoisted: `{role.hoist}`",
-    ]
-    await ctx.send("\n".join(lines))
+    embed = discord.Embed(title=role.name, color=role.color if role.color.value else EMBED_COLOR)
+    embed.add_field(name="ID", value=f"`{role.id}`", inline=True)
+    embed.add_field(name="Color", value=f"`{role.color}`", inline=True)
+    embed.add_field(name="Members", value=f"`{len(role.members)}`", inline=True)
+    embed.add_field(name="Mentionable", value=f"`{role.mentionable}`", inline=True)
+    embed.add_field(name="Hoisted", value=f"`{role.hoist}`", inline=True)
+    await ctx.send(embed=embed)
 
 
 async def _cmd_permissions(ctx: Ctx):
@@ -441,8 +519,106 @@ async def _cmd_permissions(ctx: Ctx):
         return
     target = ctx.message.mentions[0] if ctx.message.mentions else ctx.author
     granted = [name.replace("_", " ").title() for name, value in target.guild_permissions if value]
-    text = ", ".join(granted[:20]) or "None"
-    await ctx.send(f"**{target}**'s key permissions: {text}")
+    embed = _embed(title=f"{target.display_name}'s key permissions", description=", ".join(granted[:20]) or "None")
+    await ctx.send(embed=embed)
+
+
+_DISCORD_EPOCH_MS = 1420070400000
+
+
+async def _cmd_snowflake(ctx: Ctx):
+    if not ctx.args:
+        await ctx.send("Usage: `!snowflake <id>`")
+        return
+    try:
+        snowflake = int(ctx.args[0])
+    except ValueError:
+        await ctx.send("That doesn't look like a snowflake ID.")
+        return
+    ts = ((snowflake >> 22) + _DISCORD_EPOCH_MS) // 1000
+    embed = _embed(title=f"Snowflake `{snowflake}`", description=f"<t:{ts}:F> (<t:{ts}:R>)")
+    await ctx.send(embed=embed)
+
+
+async def _cmd_membercount(ctx: Ctx):
+    if not ctx.guild:
+        await ctx.send("This only works in a server.")
+        return
+    embed = _embed(title=ctx.guild.name, description=f"**{ctx.guild.member_count}** members")
+    await ctx.send(embed=embed)
+
+
+async def _cmd_servericon(ctx: Ctx):
+    if not ctx.guild:
+        await ctx.send("This only works in a server.")
+        return
+    if not ctx.guild.icon:
+        await ctx.send("This server doesn't have an icon set.")
+        return
+    embed = _embed(title=f"{ctx.guild.name}'s icon")
+    embed.set_image(url=ctx.guild.icon.url)
+    await ctx.send(embed=embed)
+
+
+async def _cmd_emojis(ctx: Ctx):
+    if not ctx.guild:
+        await ctx.send("This only works in a server.")
+        return
+    emojis = ctx.guild.emojis
+    if not emojis:
+        await ctx.send("This server has no custom emoji.")
+        return
+    parts, total = [], 0
+    for e in emojis:
+        s = str(e)
+        if total + len(s) + 1 > 4000:
+            break
+        parts.append(s)
+        total += len(s) + 1
+    embed = _embed(title=f"{ctx.guild.name}'s emoji", description=" ".join(parts))
+    footer = f"{len(emojis)} total"
+    if len(parts) < len(emojis):
+        footer += f" (showing {len(parts)})"
+    embed.set_footer(text=footer)
+    await ctx.send(embed=embed)
+
+
+async def _cmd_qr(ctx: Ctx):
+    if qrcode is None:
+        await ctx.send("QR codes need the `qrcode` package, which isn't installed.")
+        return
+    if not ctx.content:
+        await ctx.send("Usage: `!qr <text>`")
+        return
+    if len(ctx.content) > 300:
+        await ctx.send("That's too long for a QR code here (max 300 characters).")
+        return
+    qr = qrcode.QRCode(border=1)
+    qr.add_data(ctx.content)
+    qr.make(fit=True)
+    art = "\n".join("".join("██" if cell else "  " for cell in row) for row in qr.get_matrix())
+    if len(art) > 1900:
+        await ctx.send("That QR code came out too large to display here — try shorter text.")
+        return
+    await ctx.send(f"```\n{art}\n```")
+
+
+async def _cmd_ascii(ctx: Ctx):
+    if not ctx.content:
+        await ctx.send("Usage: `!ascii <text>`")
+        return
+    if pyfiglet is None:
+        await ctx.send("ASCII art needs the `pyfiglet` package, which isn't installed.")
+        return
+    try:
+        art = pyfiglet.figlet_format(ctx.content[:20])
+    except Exception:
+        await ctx.send("Couldn't render that as ASCII art.")
+        return
+    if len(art) > 1900:
+        await ctx.send("That's too long to render — try shorter text.")
+        return
+    await ctx.send(f"```\n{art}\n```")
 
 
 UTILITY_COMMANDS = {
@@ -473,6 +649,14 @@ UTILITY_COMMANDS = {
     "channelinfo": CommandSpec("Shows info about the current channel.", _cmd_channelinfo, None, "utility"),
     "roleinfo": CommandSpec("Shows info about a role.", _cmd_roleinfo, None, "utility"),
     "permissions": CommandSpec("Shows your (or @mention's) key permissions.", _cmd_permissions, None, "utility"),
+    "snowflake": CommandSpec("Decodes a Discord ID into its creation timestamp.", _cmd_snowflake, None, "utility"),
+    "membercount": CommandSpec("Shows this server's member count.", _cmd_membercount, None, "utility"),
+    "servericon": CommandSpec("Shows this server's icon full-size.", _cmd_servericon, None, "utility"),
+    "emojis": CommandSpec("Lists this server's custom emoji.", _cmd_emojis, None, "utility"),
+    "qr": CommandSpec("Generates a QR code for some text.", _cmd_qr, None, "utility"),
+    "ascii": CommandSpec("Turns short text into an ASCII art banner.", _cmd_ascii, None, "utility"),
+    "remindlist": CommandSpec("Lists your active reminders.", _cmd_remindlist, None, "utility"),
+    "remindcancel": CommandSpec("Cancels one of your active reminders.", _cmd_remindcancel, None, "utility"),
 }
 
 
@@ -489,6 +673,7 @@ async def _cmd_kick(ctx: Ctx):
     try:
         await target.kick(reason=reason)
         await ctx.send(f"Kicked **{target}**." + (f" Reason: {reason}" if reason else ""))
+        await _log_mod_action(ctx, "Kick", target, reason)
     except discord.Forbidden:
         await ctx.send("I can't kick that member (role hierarchy?).")
     except discord.HTTPException as exc:
@@ -506,6 +691,7 @@ async def _cmd_ban(ctx: Ctx):
     try:
         await target.ban(reason=reason, delete_message_days=0)
         await ctx.send(f"Banned **{target}**." + (f" Reason: {reason}" if reason else ""))
+        await _log_mod_action(ctx, "Ban", target, reason)
     except discord.Forbidden:
         await ctx.send("I can't ban that member (role hierarchy?).")
     except discord.HTTPException as exc:
@@ -524,6 +710,7 @@ async def _cmd_softban(ctx: Ctx):
         await target.ban(reason=reason, delete_message_days=1)
         await ctx.guild.unban(target, reason="Softban cleanup")
         await ctx.send(f"Softbanned **{target}** (kicked + recent messages purged).")
+        await _log_mod_action(ctx, "Softban", target, reason)
     except discord.Forbidden:
         await ctx.send("I can't do that (role hierarchy?).")
     except discord.HTTPException as exc:
@@ -567,6 +754,7 @@ async def _cmd_timeout(ctx: Ctx):
     try:
         await target.timeout(datetime.timedelta(minutes=minutes), reason=reason)
         await ctx.send(f"Timed out **{target}** for {minutes} minute(s).")
+        await _log_mod_action(ctx, "Timeout", target, reason)
     except discord.Forbidden:
         await ctx.send("I don't have permission to timeout that member.")
     except discord.HTTPException as exc:
@@ -604,6 +792,27 @@ def _save_warnings(data: dict):
         json.dump(data, f, indent=2)
 
 
+async def _log_mod_action(ctx: Ctx, action: str, target, reason=None):
+    """Posts an embed to this server's configured mod-log channel, if any
+    (set with !setmodlog). Does nothing if none is configured."""
+    if not ctx.guild:
+        return
+    channel_id = guild_settings.get_modlog_channel(ctx.guild.id)
+    if not channel_id:
+        return
+    channel = ctx.guild.get_channel(channel_id)
+    if not channel:
+        return
+    description = f"**Target:** {target}\n**By:** {ctx.author}"
+    if reason:
+        description += f"\n**Reason:** {reason}"
+    embed = _embed(title=action, description=description)
+    try:
+        await channel.send(embed=embed)
+    except discord.HTTPException:
+        pass
+
+
 async def _cmd_warn(ctx: Ctx):
     if not await _check_perm(ctx, "kick_members"):
         return
@@ -621,6 +830,7 @@ async def _cmd_warn(ctx: Ctx):
     })
     _save_warnings(data)
     await ctx.send(f"Warned **{target}**. ({len(data[key])} total) Reason: {reason}")
+    await _log_mod_action(ctx, "Warn", target, reason)
 
 
 async def _cmd_warnings(ctx: Ctx):
@@ -632,8 +842,38 @@ async def _cmd_warnings(ctx: Ctx):
     if not entries:
         await ctx.send(f"**{target}** has no warnings.")
         return
-    lines = [f"{i + 1}. {e['reason']} (by {e['by']})" for i, e in enumerate(entries[-10:])]
-    await ctx.send(f"**{target}**'s warnings ({len(entries)} total):\n" + "\n".join(lines))
+    # Numbers shown are absolute positions in the full list (not just the
+    # last-10 slice), so they line up with what !warnremove expects.
+    start = max(0, len(entries) - 10)
+    shown = entries[start:]
+    lines = [f"**{start + i + 1}.** {e['reason']} — by {e['by']}" for i, e in enumerate(shown)]
+    embed = _embed(title=f"{target}'s warnings", description="\n".join(lines))
+    embed.set_footer(text=f"{len(entries)} total")
+    await ctx.send(embed=embed)
+
+
+async def _cmd_warnremove(ctx: Ctx):
+    if not await _check_perm(ctx, "manage_messages"):
+        return
+    if not ctx.message.mentions or len(ctx.args) < 2:
+        await ctx.send("Usage: `!warnremove @member <#>` — see `!warnings @member` for numbers")
+        return
+    target = ctx.message.mentions[0]
+    try:
+        index = int(ctx.args[1])
+    except ValueError:
+        await ctx.send("That doesn't look like a warning number.")
+        return
+    key = f"{ctx.guild.id}:{target.id}"
+    data = _load_warnings()
+    entries = data.get(key, [])
+    if not (1 <= index <= len(entries)):
+        await ctx.send(f"**{target}** doesn't have a warning #{index}.")
+        return
+    removed = entries.pop(index - 1)
+    data[key] = entries
+    _save_warnings(data)
+    await ctx.send(f"Removed warning #{index} from **{target}**: {removed['reason']}")
 
 
 async def _cmd_clearwarnings(ctx: Ctx):
@@ -911,7 +1151,109 @@ async def _cmd_banlist(ctx: Ctx):
         await ctx.send("No bans in this server.")
         return
     lines = [f"{b.user} (`{b.user.id}`)" for b in bans[:25]]
-    await ctx.send(f"**Banned users** ({len(bans)} shown):\n" + "\n".join(lines))
+    embed = _embed(title="Banned users", description="\n".join(lines))
+    embed.set_footer(text=f"{len(bans)} shown")
+    await ctx.send(embed=embed)
+
+
+async def _cmd_setmodlog(ctx: Ctx):
+    if not await _check_perm(ctx, "manage_guild"):
+        return
+    if not ctx.message.channel_mentions:
+        await ctx.send("Usage: `!setmodlog #channel`")
+        return
+    channel = ctx.message.channel_mentions[0]
+    guild_settings.set_modlog_channel(ctx.guild.id, channel.id)
+    await ctx.send(f"Moderation actions will now be logged in {channel.mention}.")
+
+
+async def _cmd_muterole(ctx: Ctx):
+    if not await _check_perm(ctx, "manage_roles"):
+        return
+    role = ctx.message.role_mentions[0] if ctx.message.role_mentions else _resolve_role(ctx, ctx.content)
+    if not role:
+        await ctx.send("Usage: `!muterole <role name or @role>` — sets the role !mute/!unmute apply.")
+        return
+    guild_settings.set_mute_role(ctx.guild.id, role.id)
+    await ctx.send(f"Mute role set to **{role.name}**.")
+
+
+async def _cmd_mute(ctx: Ctx):
+    if not await _check_perm(ctx, "manage_roles"):
+        return
+    if not ctx.message.mentions:
+        await ctx.send("Usage: `!mute @member [reason]`")
+        return
+    role_id = guild_settings.get_mute_role(ctx.guild.id)
+    role = ctx.guild.get_role(role_id) if role_id else None
+    if not role:
+        await ctx.send("No mute role configured yet — set one with `!muterole <role>` first.")
+        return
+    target = ctx.message.mentions[0]
+    reason = " ".join(ctx.args[1:]) or None
+    try:
+        await target.add_roles(role, reason=reason)
+        await ctx.send(f"Muted **{target}**." + (f" Reason: {reason}" if reason else ""))
+        await _log_mod_action(ctx, "Mute", target, reason)
+    except discord.Forbidden:
+        await ctx.send("I can't manage that role (role hierarchy?).")
+
+
+async def _cmd_unmute(ctx: Ctx):
+    if not await _check_perm(ctx, "manage_roles"):
+        return
+    if not ctx.message.mentions:
+        await ctx.send("Usage: `!unmute @member`")
+        return
+    role_id = guild_settings.get_mute_role(ctx.guild.id)
+    role = ctx.guild.get_role(role_id) if role_id else None
+    if not role:
+        await ctx.send("No mute role configured yet — set one with `!muterole <role>` first.")
+        return
+    target = ctx.message.mentions[0]
+    try:
+        await target.remove_roles(role)
+        await ctx.send(f"Unmuted **{target}**.")
+        await _log_mod_action(ctx, "Unmute", target)
+    except discord.Forbidden:
+        await ctx.send("I can't manage that role (role hierarchy?).")
+
+
+async def _cmd_tempban(ctx: Ctx):
+    if not await _check_perm(ctx, "ban_members"):
+        return
+    if not ctx.message.mentions or len(ctx.args) < 2:
+        await ctx.send("Usage: `!tempban @member <minutes> [reason]`")
+        return
+    try:
+        minutes = float(ctx.args[1])
+    except ValueError:
+        await ctx.send("Minutes must be a number.")
+        return
+    minutes = max(1, min(minutes, 44640))  # capped at 31 days
+    target = ctx.message.mentions[0]
+    reason = " ".join(ctx.args[2:]) or None
+    guild = ctx.guild
+    user_id = target.id
+    try:
+        await target.ban(reason=reason, delete_message_days=0)
+    except discord.Forbidden:
+        await ctx.send("I can't ban that member (role hierarchy?).")
+        return
+    except discord.HTTPException as exc:
+        await ctx.send(f"Couldn't ban: {exc.text}")
+        return
+    await ctx.send(f"Temp-banned **{target}** for {minutes:g} minute(s)." + (f" Reason: {reason}" if reason else ""))
+    await _log_mod_action(ctx, "Tempban", target, f"{minutes:g}m" + (f" — {reason}" if reason else ""))
+
+    async def _unban_later():
+        try:
+            await asyncio.sleep(minutes * 60)
+            await guild.unban(discord.Object(id=user_id), reason="Tempban expired")
+        except (discord.HTTPException, asyncio.CancelledError):
+            pass
+
+    asyncio.create_task(_unban_later())
 
 
 MODERATION_COMMANDS = {
@@ -940,6 +1282,12 @@ MODERATION_COMMANDS = {
     "unpin": CommandSpec("Unpins the replied-to message.", _cmd_unpin, "manage_messages", "moderation"),
     "clearnick": CommandSpec("Resets a member's nickname.", _cmd_clearnick, "manage_nicknames", "moderation"),
     "banlist": CommandSpec("Lists banned users.", _cmd_banlist, "ban_members", "moderation"),
+    "warnremove": CommandSpec("Removes a single warning by number.", _cmd_warnremove, "manage_messages", "moderation"),
+    "setmodlog": CommandSpec("Sets the channel moderation actions are logged to.", _cmd_setmodlog, "manage_guild", "moderation"),
+    "muterole": CommandSpec("Sets the role !mute/!unmute apply.", _cmd_muterole, "manage_roles", "moderation"),
+    "mute": CommandSpec("Applies the configured mute role to a member.", _cmd_mute, "manage_roles", "moderation"),
+    "unmute": CommandSpec("Removes the configured mute role from a member.", _cmd_unmute, "manage_roles", "moderation"),
+    "tempban": CommandSpec("Bans a member, then auto-unbans them after N minutes.", _cmd_tempban, "ban_members", "moderation"),
 }
 
 
@@ -1101,6 +1449,23 @@ async def run_custom_command(code: str, ctx: Ctx):
 
 # ==================== dispatch ====================
 
+def _music_channel_block_reason(ctx: Ctx):
+    """None if music commands are allowed to run here; otherwise the
+    message to send instead. Unlike RP, this isn't hidden — a server
+    without a music channel configured, or a wrong-channel attempt, gets a
+    clear pointer rather than silence."""
+    if not ctx.guild:
+        return "This only works in a server."
+    channel_id = guild_settings.get_music_channel(ctx.guild.id)
+    if not channel_id:
+        return "No music channel has been set for this server yet — pick one from the Control Deck web UI."
+    if ctx.channel.id != channel_id:
+        channel = ctx.guild.get_channel(channel_id)
+        where = channel.mention if channel else "the configured channel"
+        return f"Music commands only work in {where} here."
+    return None
+
+
 async def handle_message(message: discord.Message, client: discord.Client):
     if message.author.bot or not message.content.startswith(COMMAND_PREFIX):
         return
@@ -1140,6 +1505,11 @@ async def handle_message(message: discord.Message, client: discord.Client):
             return
         spec = BUILTIN_COMMANDS[name]
         try:
+            if spec.category == "music":
+                blocked = _music_channel_block_reason(ctx)
+                if blocked:
+                    await ctx.send(blocked)
+                    return
             if spec.required_perm and not await _check_perm(ctx, spec.required_perm):
                 return
             await spec.handler(ctx)
