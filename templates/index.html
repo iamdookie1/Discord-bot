@@ -325,6 +325,16 @@
         </div>
 
         <div class="card">
+          <h2 class="card-title">Add a song</h2>
+          <div class="field-row">
+            <input type="text" id="mtPlayInput" class="field-input" placeholder="Song name, YouTube link, or Spotify track link&hellip;">
+            <button class="btn-primary btn-small" id="mtPlayBtn">Play / Queue</button>
+          </div>
+          <p class="field-hint">Plays right away if nothing's currently going, otherwise joins the end of the queue &mdash; same as <span class="mono">!play</span>.</p>
+          <p class="form-msg" id="mtPlayMsg"></p>
+        </div>
+
+        <div class="card">
           <h2 class="card-title">Effects <span class="card-title-sub">applies instantly, mid-song</span></h2>
           <div class="music-effect-grid">
             <label class="music-effect-option">
@@ -336,8 +346,24 @@
               <span>Nightcore</span>
             </label>
             <label class="music-effect-option">
+              <input type="radio" name="mtEffect" value="vaporwave">
+              <span>Vaporwave</span>
+            </label>
+            <label class="music-effect-option">
+              <input type="radio" name="mtEffect" value="chipmunk">
+              <span>Chipmunk</span>
+            </label>
+            <label class="music-effect-option">
               <input type="radio" name="mtEffect" value="slowed_reverb">
               <span>Slowed + Reverb</span>
+            </label>
+            <label class="music-effect-option">
+              <input type="radio" name="mtEffect" value="reverb">
+              <span>Reverb</span>
+            </label>
+            <label class="music-effect-option">
+              <input type="radio" name="mtEffect" value="echo">
+              <span>Echo</span>
             </label>
             <label class="music-effect-option">
               <input type="radio" name="mtEffect" value="bass_boost">
@@ -347,8 +373,30 @@
               <input type="radio" name="mtEffect" value="8d">
               <span>8D Audio</span>
             </label>
+            <label class="music-effect-option">
+              <input type="radio" name="mtEffect" value="muffled">
+              <span>Muffled</span>
+            </label>
+            <label class="music-effect-option">
+              <input type="radio" name="mtEffect" value="radio">
+              <span>Radio</span>
+            </label>
+            <label class="music-effect-option">
+              <input type="radio" name="mtEffect" value="karaoke">
+              <span>Karaoke</span>
+            </label>
+            <label class="music-effect-option">
+              <input type="radio" name="mtEffect" value="mono">
+              <span>Mono</span>
+            </label>
           </div>
           <p class="field-hint">Restarts the current track from the same position with the new effect applied &mdash; there's a brief skip in audio while it switches over.</p>
+        </div>
+
+        <div class="card">
+          <h2 class="card-title">Crossfade <span class="card-title-sub" id="mtCrossfadeValue">Off</span></h2>
+          <input type="range" id="mtCrossfadeSlider" class="field-range" min="0" max="10" step="1" value="0">
+          <p class="field-hint">Blends the tail of a track into the start of the next one instead of a hard cut &mdash; 0 disables it. Applies to whatever transition happens next; changing it mid-song reschedules the current track's crossfade too.</p>
         </div>
 
         <div class="card">

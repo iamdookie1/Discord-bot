@@ -402,6 +402,7 @@ function fmtMusicTime(seconds) {
 // an explicit "not available" message alongside other always-visible chrome (e.g. the server picker).
 function createMusicController(getGuildId, els) {
   let pollTimer = null;
+  let crossfadeSliderDirty = false;   // true while the user's actively dragging it — don't fight them mid-poll
 
   function render(data) {
     const available = !!(data && data.available);
@@ -423,6 +424,7 @@ function createMusicController(getGuildId, els) {
       if (els.queueList) els.queueList.innerHTML = '<p class="field-hint">Queue is empty.</p>';
       if (els.requester) els.requester.textContent = "";
       setEffectRadios(data.effect_mode);
+      setCrossfade(data.crossfade_seconds);
       return;
     }
 
@@ -449,12 +451,22 @@ function createMusicController(getGuildId, els) {
     if (els.queueList) {
       els.queueList.innerHTML = data.queue_length
         ? data.queue
-            .map((t, i) => `<div class="music-queue-item"><span class="music-queue-index">${i + 1}.</span> ${escapeHtml(t)}</div>`)
+            .map((t, i) => `
+              <div class="music-queue-item">
+                <span class="music-queue-text"><span class="music-queue-index">${i + 1}.</span> ${escapeHtml(t)}</span>
+                <button type="button" class="music-queue-remove" data-index="${i + 1}" title="Remove from queue">&times;</button>
+              </div>`)
             .join("")
         : '<p class="field-hint">Queue is empty.</p>';
+      if (data.queue_length) {
+        els.queueList.querySelectorAll(".music-queue-remove").forEach((btn) => {
+          btn.addEventListener("click", () => removeFromQueue(Number(btn.dataset.index)));
+        });
+      }
     }
 
     setEffectRadios(data.effect_mode);
+    setCrossfade(data.crossfade_seconds);
   }
 
   function setEffectRadios(mode) {
@@ -462,6 +474,13 @@ function createMusicController(getGuildId, els) {
     els.effectRadios().forEach((r) => {
       r.checked = r.value === (mode || "off");
     });
+  }
+
+  function setCrossfade(seconds) {
+    if (!els.crossfadeSlider || crossfadeSliderDirty) return;
+    const value = seconds ?? 0;
+    els.crossfadeSlider.value = value;
+    if (els.crossfadeValueLabel) els.crossfadeValueLabel.textContent = value > 0 ? `${value}s` : "Off";
   }
 
   async function poll() {
@@ -527,7 +546,68 @@ function createMusicController(getGuildId, els) {
     poll();
   }
 
-  return { render, poll, start, stop, action, volume, setEffect };
+  async function setCrossfadeSeconds(seconds) {
+    const guildId = getGuildId();
+    if (!guildId) return;
+    const data = await api("/api/music/crossfade", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ guild_id: guildId, seconds }),
+    });
+    if (!data.ok) setMsg(els.msg, data.error || "Couldn't set that.", "error");
+  }
+
+  function beginCrossfadeDrag() {
+    crossfadeSliderDirty = true;
+  }
+
+  function endCrossfadeDrag() {
+    crossfadeSliderDirty = false;
+  }
+
+  async function playSong(query, msgEl) {
+    const guildId = getGuildId();
+    const target = msgEl || els.msg;
+    if (!guildId) {
+      setMsg(target, "Pick a server first.", "error");
+      return;
+    }
+    if (!query || !query.trim()) {
+      setMsg(target, "Type a song name or link first.", "error");
+      return;
+    }
+    setMsg(target, "Looking that up...", "");
+    const data = await api("/api/music/play", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ guild_id: guildId, query }),
+    });
+    if (data.ok) {
+      setMsg(target, data.queued ? `Queued "${data.title}".` : `Now playing "${data.title}".`, "success");
+    } else {
+      setMsg(target, data.error || "Couldn't find that.", "error");
+    }
+    poll();
+    return data;
+  }
+
+  async function removeFromQueue(index) {
+    const guildId = getGuildId();
+    if (!guildId) return;
+    const data = await api("/api/music/queue/remove", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ guild_id: guildId, index }),
+    });
+    if (!data.ok) setMsg(els.msg, data.error || "Couldn't remove that.", "error");
+    poll();
+  }
+
+  return {
+    render, poll, start, stop, action, volume, setEffect,
+    setCrossfadeSeconds, beginCrossfadeDrag, endCrossfadeDrag,
+    playSong, removeFromQueue,
+  };
 }
 
 // ---------- text tab: compact music card ----------
@@ -585,6 +665,8 @@ const musicTabController = createMusicController(() => musicTabServerSelect.valu
   queueList: document.getElementById("mtQueueList"),
   msg: document.getElementById("mtMsg"),
   effectRadios: () => document.querySelectorAll('input[name="mtEffect"]'),
+  crossfadeSlider: document.getElementById("mtCrossfadeSlider"),
+  crossfadeValueLabel: document.getElementById("mtCrossfadeValue"),
 });
 
 mtPauseBtn.addEventListener("click", () => {
@@ -600,6 +682,33 @@ document.querySelectorAll('input[name="mtEffect"]').forEach((radio) => {
   radio.addEventListener("change", () => {
     if (radio.checked) musicTabController.setEffect(radio.value);
   });
+});
+
+const mtPlayInput = document.getElementById("mtPlayInput");
+const mtPlayBtn = document.getElementById("mtPlayBtn");
+const mtPlayMsg = document.getElementById("mtPlayMsg");
+
+mtPlayBtn.addEventListener("click", async () => {
+  mtPlayBtn.disabled = true;
+  await musicTabController.playSong(mtPlayInput.value, mtPlayMsg);
+  mtPlayBtn.disabled = false;
+  mtPlayInput.value = "";
+});
+mtPlayInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") mtPlayBtn.click();
+});
+
+const mtCrossfadeSlider = document.getElementById("mtCrossfadeSlider");
+const mtCrossfadeValue = document.getElementById("mtCrossfadeValue");
+
+mtCrossfadeSlider.addEventListener("input", () => {
+  const value = Number(mtCrossfadeSlider.value);
+  mtCrossfadeValue.textContent = value > 0 ? `${value}s` : "Off";
+});
+mtCrossfadeSlider.addEventListener("pointerdown", () => musicTabController.beginCrossfadeDrag());
+mtCrossfadeSlider.addEventListener("change", () => {
+  musicTabController.setCrossfadeSeconds(Number(mtCrossfadeSlider.value));
+  musicTabController.endCrossfadeDrag();
 });
 
 async function refreshMusicTabServers() {
