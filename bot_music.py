@@ -159,10 +159,11 @@ def _filter_custom(p):
 
 
 # mode -> function(params_dict) -> ffmpeg -af filter chain string. Applied
-# by rebuilding the audio source (see _start_source) — an ffmpeg filter
-# can't be changed on an already-running process, so switching effects
-# (or tweaking a slider) on the currently-playing track means restarting
-# it from its current position.
+# by building a fresh audio source (see _start_source/_apply_effect_live) —
+# an ffmpeg filter can't be changed on an already-running process, so
+# switching effects (or tweaking a slider) on the currently-playing track
+# means building a new source at its current position and hot-swapping it
+# in, not stopping and restarting playback.
 _EFFECT_BUILDERS = {
     "nightcore": _filter_nightcore,
     "vaporwave": _filter_vaporwave,
