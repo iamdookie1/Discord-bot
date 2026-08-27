@@ -1039,6 +1039,27 @@ input[type="file"].field-input::file-selector-button {
   cursor: pointer;
 }
 
+/* ---- per-effect parameter sliders ---- */
+
+.music-effect-sliders {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.music-effect-slider-row .field-label {
+  display: flex;
+  justify-content: space-between;
+  margin: 0 0 4px;
+}
+
+.music-effect-slider-row .field-range {
+  margin: 0;
+}
+
 /* ---- messages ---- */
 
 .form-msg {

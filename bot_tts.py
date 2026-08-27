@@ -71,6 +71,7 @@ TTS_SETTINGS_PATH = os.path.join(BASE_DIR, "tts_settings.json")
 _TTS_SETTINGS_DEFAULTS = {
     "voice_slot": 1,   # !voiceselection — which VOICE_SLOTS entry, applies to everyone
     "volume": 100,     # !volume — espeak-ng amplitude (0-200, 100 = normal), applies to everyone
+    "rate": 175,       # speaking speed in words/minute (80-400, 175 = espeak-ng default), applies to everyone
     "tone": 5,         # !tone — pitch range/expressiveness (1-10), owner's own messages only
     "pitch": 0,        # !pitch — pitch offset (-100 to 100), owner's own messages only
     "only_me": False,  # !onlytm — when on, only the owner's messages get read at all
@@ -155,7 +156,7 @@ def sanitize_message(message: discord.Message):
     return text
 
 
-def _synthesize(text: str, *, voice: str = None, amplitude: int = 100,
+def _synthesize(text: str, *, voice: str = None, amplitude: int = 100, wpm: int = None,
                  pitch_pct: int = None, range_pct: int = None):
     """Blocking — run off the event loop. Returns a temp WAV file path on
     success (caller deletes it after playback), or None on failure.
@@ -171,6 +172,8 @@ def _synthesize(text: str, *, voice: str = None, amplitude: int = 100,
     args = ["espeak-ng", "-w", path, "-a", str(amplitude)]
     if voice:
         args += ["-v", voice]
+    if wpm is not None:
+        args += ["-s", str(wpm)]
     if pitch_pct is not None or range_pct is not None:
         attrs = []
         if pitch_pct is not None:
@@ -227,7 +230,7 @@ async def _worker(guild: discord.Guild, state: GuildTTSState):
 
             settings = _load_tts_settings()
             voice_slot = VOICE_SLOTS.get(settings["voice_slot"], VOICE_SLOTS[1])
-            synth_kwargs = {"voice": voice_slot[0], "amplitude": settings["volume"]}
+            synth_kwargs = {"voice": voice_slot[0], "amplitude": settings["volume"], "wpm": settings["rate"]}
             if message.author.id == OWNER_ID:
                 synth_kwargs["pitch_pct"] = settings["pitch"]
                 synth_kwargs["range_pct"] = settings["tone"] * 20
@@ -457,3 +460,56 @@ async def handle_volume(ctx):
 TTS_COMMANDS = {
     "tts": ("Toggles reading this channel's messages aloud in your voice channel.", handle_toggle, None),
 }
+
+
+# ==================== web bridge ====================
+# Same settings as the owner-only chat commands above, but reachable from the
+# web control panel with no owner-ID check — the panel is a single-operator
+# surface (unlike open Discord chat), so anyone with access to it can already
+# do everything else these settings affect.
+
+TTS_SETTING_SPECS = [
+    {"id": "volume", "label": "Volume", "min": 0, "max": 200, "step": 1, "unit": "%"},
+    {"id": "rate", "label": "Speed", "min": 80, "max": 400, "step": 5, "unit": " wpm"},
+    {"id": "tone", "label": "Tone (your messages only)", "min": 1, "max": 10, "step": 1, "unit": ""},
+    {"id": "pitch", "label": "Pitch (your messages only)", "min": -100, "max": 100, "step": 5, "unit": ""},
+]
+
+
+def web_get_tts_settings() -> dict:
+    return {
+        "ok": True,
+        "available": _HAS_ESPEAK,
+        "unavailable_reason": _unavailable_reason(),
+        "settings": _load_tts_settings(),
+        "specs": TTS_SETTING_SPECS,
+        "voices": [{"slot": n, "label": label} for n, (_id, label) in sorted(VOICE_SLOTS.items())],
+    }
+
+
+def web_update_tts_settings(updates: dict) -> dict:
+    settings = _load_tts_settings()
+    bounds = {spec["id"]: (spec["min"], spec["max"]) for spec in TTS_SETTING_SPECS}
+
+    for key, (lo, hi) in bounds.items():
+        if key in updates:
+            try:
+                value = int(updates[key])
+            except (TypeError, ValueError):
+                return {"ok": False, "error": f"{key} must be a whole number."}
+            settings[key] = max(lo, min(hi, value))
+
+    if "voice_slot" in updates:
+        try:
+            slot = int(updates["voice_slot"])
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "voice_slot must be a whole number."}
+        if slot not in VOICE_SLOTS:
+            return {"ok": False, "error": f"No voice #{slot}."}
+        settings["voice_slot"] = slot
+
+    if "only_me" in updates:
+        settings["only_me"] = bool(updates["only_me"])
+
+    _save_tts_settings(settings)
+    return {"ok": True, "settings": settings}

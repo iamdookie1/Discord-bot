@@ -7,6 +7,7 @@ import bot_backup
 import bot_commands
 import bot_music
 import bot_rp
+import bot_tts
 import guild_settings
 from bot_manager import bot_manager
 
@@ -291,6 +292,22 @@ def music_effect():
     return jsonify(result), (200 if result.get("ok") else 400)
 
 
+@app.route("/api/music/effect_params", methods=["POST"])
+def music_effect_params():
+    data = request.get_json(force=True, silent=True) or {}
+    guild_id = data.get("guild_id", "")
+    params = data.get("params") or {}
+    tied = data.get("tied")
+
+    if bot_manager.status != "online":
+        return jsonify({"ok": False, "error": "Bot isn't connected yet."}), 400
+    if not guild_id:
+        return jsonify({"ok": False, "error": "Pick a server first."}), 400
+
+    result = bot_music.web_set_effect_params(bot_manager.client, guild_id, params, tied=tied)
+    return jsonify(result), (200 if result.get("ok") else 400)
+
+
 @app.route("/api/music/crossfade", methods=["POST"])
 def music_crossfade():
     data = request.get_json(force=True, silent=True) or {}
@@ -333,6 +350,20 @@ def music_queue_remove():
         return jsonify({"ok": False, "error": "Pick a server and a queue position."}), 400
 
     result = bot_music.web_remove_from_queue(bot_manager.client, guild_id, index)
+    return jsonify(result), (200 if result.get("ok") else 400)
+
+
+# ---------------- text-to-speech settings (global, web UI only) ----------------
+
+@app.route("/api/tts/settings")
+def tts_settings():
+    return jsonify(bot_tts.web_get_tts_settings())
+
+
+@app.route("/api/tts/settings", methods=["POST"])
+def tts_settings_update():
+    data = request.get_json(force=True, silent=True) or {}
+    result = bot_tts.web_update_tts_settings(data)
     return jsonify(result), (200 if result.get("ok") else 400)
 
 

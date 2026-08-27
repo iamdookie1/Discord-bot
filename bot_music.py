@@ -74,34 +74,112 @@ YTDLP_OPTIONS = {
     "extractor_args": {"youtube": {"player_client": ["android", "web"]}},
 }
 
-# ffmpeg -af filter chains for the Music tab's effect toggle. Applied by
-# rebuilding the audio source (see _start_source) — an ffmpeg filter can't
-# be changed on an already-running process, so switching effects on the
-# currently-playing track means restarting it from its current position.
-#
-# The reverb here (used by "slowed_reverb" and standalone "reverb") is a
-# handful of short, closely-spaced aecho taps rather than one long one —
-# ffmpeg has no real reverb filter (afreeverb isn't compiled into most
-# builds), and a single ~1s echo just sounds like a discrete repeat, not a
-# reverb tail. Several short (40-250ms) decaying taps read as a diffuse
-# wash instead, much closer to actual reverb.
-_REVERB_TAPS = "aecho=0.8:0.7:40|60|90|120|180|250:0.5|0.4|0.35|0.25|0.2|0.15"
-_EFFECT_FILTERS = {
-    "nightcore": "asetrate=44100*1.25,aresample=44100",
-    "vaporwave": "asetrate=44100*0.75,aresample=44100",
-    "chipmunk": "asetrate=44100*1.6,aresample=44100",
-    "slowed_reverb": f"asetrate=44100*0.88,aresample=44100,{_REVERB_TAPS}",
-    "reverb": _REVERB_TAPS,
-    "echo": "aecho=0.8:0.9:500|1000:0.4|0.3",
-    "bass_boost": "bass=g=12",
-    "8d": "apulsator=hz=0.09",
-    "muffled": "lowpass=f=500",
-    "radio": "highpass=f=300,lowpass=f=3400",
-    "karaoke": "pan=stereo|c0=c0-c1|c1=c1-c0",
-    "mono": "pan=mono|c0=0.5*c0+0.5*c1",
+def _param(value, lo, hi, default):
+    """Clamps a slider value from the web UI to its valid range, falling
+    back to the default for anything missing/unparseable."""
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        return default
+    return max(lo, min(hi, value))
+
+
+def _reverb_taps(amount_pct):
+    """A handful of short, closely-spaced aecho taps rather than one long
+    one — ffmpeg has no real reverb filter (afreeverb isn't compiled into
+    most builds), and a single ~1s echo just sounds like a discrete
+    repeat, not a reverb tail. `amount_pct` (0-100) scales both how many
+    taps are active and how loud they are, from barely-there to a dense
+    wash."""
+    amount = _param(amount_pct, 0, 100, 50) / 100
+    base_delays = [40, 60, 90, 120, 180, 250]
+    base_decays = [0.5, 0.4, 0.35, 0.25, 0.2, 0.15]
+    n = max(1, round(len(base_delays) * (0.3 + 0.7 * amount)))
+    delays = base_delays[:n]
+    decays = [round(d * (0.3 + 0.7 * amount), 3) for d in base_decays[:n]]
+    return f"aecho=0.8:0.7:{'|'.join(str(d) for d in delays)}:{'|'.join(str(d) for d in decays)}"
+
+
+def _filter_nightcore(p):
+    ratio = 1 + _param(p.get("amount"), 0, 100, 25) / 100
+    return f"asetrate=44100*{ratio:.4f},aresample=44100"
+
+
+def _filter_vaporwave(p):
+    ratio = 1 - _param(p.get("amount"), 0, 100, 25) / 100 * 0.5
+    return f"asetrate=44100*{ratio:.4f},aresample=44100"
+
+
+def _filter_chipmunk(p):
+    ratio = 1 + _param(p.get("amount"), 0, 200, 60) / 100
+    return f"asetrate=44100*{ratio:.4f},aresample=44100"
+
+
+def _filter_slowed_reverb(p):
+    ratio = 1 - _param(p.get("slow"), 0, 50, 12) / 100
+    return f"asetrate=44100*{ratio:.4f},aresample=44100,{_reverb_taps(p.get('reverb'))}"
+
+
+def _filter_reverb(p):
+    return _reverb_taps(p.get("reverb"))
+
+
+def _filter_echo(p):
+    delay = int(_param(p.get("delay"), 100, 2000, 500))
+    decay = _param(p.get("decay"), 0, 100, 40) / 100
+    return f"aecho=0.8:0.9:{delay}:{decay:.2f}"
+
+
+def _filter_bass_boost(p):
+    amount = _param(p.get("amount"), 0, 30, 12)
+    return f"bass=g={amount:.1f}"
+
+
+def _filter_8d(p):
+    speed = _param(p.get("speed"), 1, 30, 9) / 100
+    return f"apulsator=hz={speed:.3f}"
+
+
+def _filter_muffled(p):
+    cutoff = int(_param(p.get("cutoff"), 100, 2000, 500))
+    return f"lowpass=f={cutoff}"
+
+
+def _filter_custom(p):
+    """Free-form speed/pitch, with an optional "tied" mode where pitch
+    just follows speed (the classic nightcore/vaporwave trick — one
+    asetrate does both, always safe) versus independent control (pitch
+    via asetrate, tempo corrected back separately via atempo)."""
+    speed = _param(p.get("speed"), 50, 200, 100) / 100
+    if p.get("tied", True):
+        return f"asetrate=44100*{speed:.4f},aresample=44100"
+    pitch = _param(p.get("pitch"), 50, 200, 100) / 100
+    tempo = max(0.5, min(100.0, speed / pitch))  # ffmpeg's atempo range, single call
+    return f"asetrate=44100*{pitch:.4f},aresample=44100,atempo={tempo:.4f}"
+
+
+# mode -> function(params_dict) -> ffmpeg -af filter chain string. Applied
+# by rebuilding the audio source (see _start_source) — an ffmpeg filter
+# can't be changed on an already-running process, so switching effects
+# (or tweaking a slider) on the currently-playing track means restarting
+# it from its current position.
+_EFFECT_BUILDERS = {
+    "nightcore": _filter_nightcore,
+    "vaporwave": _filter_vaporwave,
+    "chipmunk": _filter_chipmunk,
+    "slowed_reverb": _filter_slowed_reverb,
+    "reverb": _filter_reverb,
+    "echo": _filter_echo,
+    "bass_boost": _filter_bass_boost,
+    "8d": _filter_8d,
+    "muffled": _filter_muffled,
+    "radio": lambda p: "highpass=f=300,lowpass=f=3400",
+    "karaoke": lambda p: "pan=stereo|c0=c0-c1|c1=c1-c0",
+    "mono": lambda p: "pan=mono|c0=0.5*c0+0.5*c1",
+    "custom": _filter_custom,
 }
 EFFECT_MODES = ["off", "nightcore", "vaporwave", "chipmunk", "slowed_reverb", "reverb", "echo",
-                "bass_boost", "8d", "muffled", "radio", "karaoke", "mono"]
+                "bass_boost", "8d", "muffled", "radio", "karaoke", "mono", "custom"]
 EFFECT_LABELS = {
     "off": "Off",
     "nightcore": "Nightcore",
@@ -116,7 +194,58 @@ EFFECT_LABELS = {
     "radio": "Radio",
     "karaoke": "Karaoke (vocal reduction)",
     "mono": "Mono",
+    "custom": "Custom",
 }
+
+# Per-mode tunable sliders, sent to the web UI as-is so it can build them
+# generically instead of hardcoding a form per effect. (id, label, min,
+# max, default, step, unit) — modes not listed here (radio/karaoke/mono)
+# have nothing to tweak.
+EFFECT_PARAM_SPECS = {
+    "nightcore": [{"id": "amount", "label": "Amount", "min": 0, "max": 100, "default": 25, "step": 1, "unit": "%"}],
+    "vaporwave": [{"id": "amount", "label": "Amount", "min": 0, "max": 100, "default": 25, "step": 1, "unit": "%"}],
+    "chipmunk": [{"id": "amount", "label": "Amount", "min": 0, "max": 200, "default": 60, "step": 1, "unit": "%"}],
+    "slowed_reverb": [
+        {"id": "slow", "label": "Slowed", "min": 0, "max": 50, "default": 12, "step": 1, "unit": "%"},
+        {"id": "reverb", "label": "Reverb", "min": 0, "max": 100, "default": 50, "step": 1, "unit": "%"},
+    ],
+    "reverb": [{"id": "reverb", "label": "Reverb", "min": 0, "max": 100, "default": 50, "step": 1, "unit": "%"}],
+    "echo": [
+        {"id": "delay", "label": "Delay", "min": 100, "max": 2000, "default": 500, "step": 50, "unit": "ms"},
+        {"id": "decay", "label": "Decay", "min": 0, "max": 100, "default": 40, "step": 1, "unit": "%"},
+    ],
+    "bass_boost": [{"id": "amount", "label": "Amount", "min": 0, "max": 30, "default": 12, "step": 1, "unit": "dB"}],
+    "8d": [{"id": "speed", "label": "Speed", "min": 1, "max": 30, "default": 9, "step": 1, "unit": ""}],
+    "muffled": [{"id": "cutoff", "label": "Cutoff", "min": 100, "max": 2000, "default": 500, "step": 50, "unit": "Hz"}],
+    "custom": [
+        {"id": "speed", "label": "Speed", "min": 50, "max": 200, "default": 100, "step": 1, "unit": "%"},
+        {"id": "pitch", "label": "Pitch", "min": 50, "max": 200, "default": 100, "step": 1, "unit": "%"},
+    ],
+}
+# Modes with a "pitch follows speed" checkbox alongside their sliders.
+EFFECT_TIED_MODES = {"custom"}
+
+
+def _effect_params_for(state, mode=None) -> dict:
+    """Current (or default) slider values for a mode, merged so the UI
+    always has concrete numbers to show even before anything's been
+    tweaked."""
+    mode = mode or state.effect_mode
+    specs = EFFECT_PARAM_SPECS.get(mode, [])
+    stored = state.effect_params.get(mode, {})
+    return {s["id"]: stored.get(s["id"], s["default"]) for s in specs}
+
+
+def _effect_filter_for(state) -> str | None:
+    if state.effect_mode == "off":
+        return None
+    builder = _EFFECT_BUILDERS.get(state.effect_mode)
+    if not builder:
+        return None
+    params = _effect_params_for(state)
+    if state.effect_mode in EFFECT_TIED_MODES:
+        params = {**params, "tied": state.custom_tied}
+    return builder(params)
 
 # A prefetched stream URL older than this is discarded and re-fetched fresh
 # instead of trusted — well under the hours-long expiry YouTube stream URLs
@@ -182,7 +311,9 @@ class GuildMusicState:
         self.refresh_task = None   # asyncio.Task ticking the menu's elapsed time
         self.idle_task = None      # asyncio.Task that disconnects after IDLE_DISCONNECT_SECONDS
         self.text_channel = None   # last text channel !play was used in — for skip/error messages
-        self.effect_mode = "off"   # off | one of EFFECT_MODES — see _EFFECT_FILTERS
+        self.effect_mode = "off"   # off | one of EFFECT_MODES — see _EFFECT_BUILDERS
+        self.effect_params: dict = {}  # {mode: {param_id: value}} — remembers each mode's last tweak
+        self.custom_tied = True    # "custom" mode only — pitch follows speed when True
         self.pending_restart = None    # {"track":, "elapsed":} set when restarting the current track
         self.crossfade_seconds = 0.0   # 0 disables it — see _schedule_crossfade
         self.crossfade_task = None     # asyncio.Task counting down to the next crossfade
@@ -527,9 +658,25 @@ async def _extract(query: str, background: bool = False):
                 "url": info["url"],
                 "duration": info.get("duration"),
                 "http_headers": info.get("http_headers") or {},
+                # The specific video's own stable URL — re-extracting via
+                # THIS instead of the original free-text query next time
+                # guarantees we land on the exact same video again. A
+                # generic search re-run later (for a loop repeat, a
+                # restart, a prefetch) can come back with a different
+                # upload that happens to share the same title.
+                "webpage_url": info.get("webpage_url") or None,
             }
 
     return await loop.run_in_executor(None, _run)
+
+
+def _extract_target(track: dict) -> str:
+    """What to pass to _extract() when RE-resolving a track that's already
+    been played at least once — the stable per-video URL once we have it,
+    not the original free-text query, so a repeat (loop mode), a restart
+    (effect toggle), or a prefetch always lands on the same video instead
+    of whatever a fresh text search happens to turn up this time."""
+    return track.get("webpage_url") or track["query"]
 
 
 def _mix_pcm(a: bytes, b: bytes, t: float) -> bytes:
@@ -643,6 +790,19 @@ async def _crossfade_watch(guild: discord.Guild, voice_client: discord.VoiceClie
 
 
 async def _do_crossfade(guild: discord.Guild, voice_client: discord.VoiceClient, state: "GuildMusicState"):
+    # Same loop-mode requeue _play_next does for the track that's ending —
+    # done here too since crossfade bypasses _play_next entirely. Without
+    # this, loop mode would silently stop working the moment a crossfade
+    # happens instead of a hard cut (the just-played track just vanished
+    # instead of going back in the queue).
+    outgoing_track = state.current
+    if state.loop_mode == "track" and outgoing_track:
+        outgoing_track.pop("_prefetch", None)
+        state.queue.insert(0, outgoing_track)
+    elif state.loop_mode == "queue" and outgoing_track:
+        outgoing_track.pop("_prefetch", None)
+        state.queue.append(outgoing_track)
+
     if not state.queue:
         return
     next_track = state.queue[0]
@@ -652,7 +812,7 @@ async def _do_crossfade(guild: discord.Guild, voice_client: discord.VoiceClient,
         fresh = prefetch
     else:
         try:
-            fresh = await _extract(next_track["query"])
+            fresh = await _extract(_extract_target(next_track))
         except Exception:
             return  # best-effort — the natural end-of-track flow still covers this song normally
 
@@ -665,6 +825,7 @@ async def _do_crossfade(guild: discord.Guild, voice_client: discord.VoiceClient,
 
     next_track["url"] = fresh["url"]
     next_track["http_headers"] = fresh.get("http_headers") or {}
+    next_track["webpage_url"] = fresh.get("webpage_url") or next_track.get("webpage_url")
 
     before_options = FFMPEG_OPTIONS["before_options"]
     headers = next_track.get("http_headers") or {}
@@ -672,7 +833,7 @@ async def _do_crossfade(guild: discord.Guild, voice_client: discord.VoiceClient,
         header_str = "".join(f"{k}: {v}\r\n" for k, v in headers.items())
         before_options += f' -headers "{header_str}"'
     options = FFMPEG_OPTIONS["options"]
-    effect_filter = _EFFECT_FILTERS.get(state.effect_mode)
+    effect_filter = _effect_filter_for(state)
     if effect_filter:
         options += f' -af "{effect_filter}"'
 
@@ -711,7 +872,7 @@ def _start_source(guild: discord.Guild, voice_client: discord.VoiceClient, state
         before_options += f" -ss {seek_seconds:.2f}"
 
     options = FFMPEG_OPTIONS["options"]
-    effect_filter = _EFFECT_FILTERS.get(state.effect_mode)
+    effect_filter = _effect_filter_for(state)
     if effect_filter:
         options += f' -af "{effect_filter}"'
 
@@ -773,10 +934,11 @@ async def _prefetch_next(guild_id: int):
         return
 
     try:
-        fresh = await _extract(upcoming["query"], background=True)
+        fresh = await _extract(_extract_target(upcoming), background=True)
         upcoming["_prefetch"] = {
             "url": fresh["url"],
             "http_headers": fresh.get("http_headers") or {},
+            "webpage_url": fresh.get("webpage_url") or upcoming.get("webpage_url"),
             "at": time.monotonic(),
         }
     except Exception:
@@ -814,7 +976,7 @@ async def _play_next(guild: discord.Guild, voice_client: discord.VoiceClient):
         fresh = prefetch
     else:
         try:
-            fresh = await _extract(track["query"])
+            fresh = await _extract(_extract_target(track))
         except Exception:
             if state.text_channel:
                 try:
@@ -826,6 +988,7 @@ async def _play_next(guild: discord.Guild, voice_client: discord.VoiceClient):
 
     track["url"] = fresh["url"]
     track["http_headers"] = fresh.get("http_headers") or {}
+    track["webpage_url"] = fresh.get("webpage_url") or track.get("webpage_url")
     state.current = track
     _reset_position(state)
 
@@ -840,7 +1003,7 @@ async def _resume_after_restart(guild: discord.Guild, voice_client: discord.Voic
     player has actually finished tearing down."""
     _cancel_crossfade_task(state)
     try:
-        fresh = await _extract(track["query"])
+        fresh = await _extract(_extract_target(track))
     except Exception:
         if state.text_channel:
             try:
@@ -854,6 +1017,7 @@ async def _resume_after_restart(guild: discord.Guild, voice_client: discord.Voic
 
     track["url"] = fresh["url"]
     track["http_headers"] = fresh.get("http_headers") or {}
+    track["webpage_url"] = fresh.get("webpage_url") or track.get("webpage_url")
     state.current = track
     state.position = elapsed
     state.resumed_at = time.monotonic()
@@ -1070,6 +1234,10 @@ def get_state_dict(client: discord.Client, guild_id: str) -> dict:
         "loop_mode": state.loop_mode,
         "effect_mode": state.effect_mode,
         "effect_modes": [{"id": m, "label": EFFECT_LABELS[m]} for m in EFFECT_MODES],
+        "effect_param_specs": EFFECT_PARAM_SPECS,
+        "effect_params": _effect_params_for(state),
+        "effect_tied_modes": sorted(EFFECT_TIED_MODES),
+        "custom_tied": state.custom_tied,
         "crossfade_seconds": state.crossfade_seconds,
         "crossfade_min": CROSSFADE_MIN_SECONDS,
         "crossfade_max": CROSSFADE_MAX_SECONDS,
@@ -1182,6 +1350,36 @@ def web_set_effect(client: discord.Client, guild_id: str, mode: str) -> dict:
     _cancel_crossfade_task(state)  # _resume_after_restart -> _start_source reschedules it fresh
     vc.stop()
     return {"ok": True, "effect_mode": mode}
+
+
+def web_set_effect_params(client: discord.Client, guild_id: str, params: dict, tied=None) -> dict:
+    """Updates the currently-active effect's sliders (e.g. how much reverb,
+    how fast custom mode's speed is) and, same as web_set_effect, restarts
+    the current track in place so it's heard immediately. Only ever
+    touches the mode that's actually active — sliders for other modes are
+    just remembered for next time they're selected, no restart needed."""
+    guild = client.get_guild(int(guild_id)) if client else None
+    state = _state(int(guild_id))
+    mode = state.effect_mode
+    if mode == "off":
+        return {"ok": False, "error": "No effect is active."}
+    specs = EFFECT_PARAM_SPECS.get(mode)
+    if not specs:
+        return {"ok": False, "error": "This effect has nothing to tweak."}
+
+    clamped = {s["id"]: _param((params or {}).get(s["id"]), s["min"], s["max"], s["default"]) for s in specs}
+    state.effect_params[mode] = clamped
+    if mode in EFFECT_TIED_MODES and tied is not None:
+        state.custom_tied = bool(tied)
+
+    vc = guild.voice_client if guild else None
+    if not vc or not state.current or state.pending_restart:
+        return {"ok": True, "effect_params": clamped, "custom_tied": state.custom_tied}
+
+    state.pending_restart = {"track": state.current, "elapsed": _elapsed(state)}
+    _cancel_crossfade_task(state)
+    vc.stop()
+    return {"ok": True, "effect_params": clamped, "custom_tied": state.custom_tied}
 
 
 def web_set_crossfade(client: discord.Client, guild_id: str, seconds) -> dict:
