@@ -389,8 +389,14 @@
               <input type="radio" name="mtEffect" value="mono">
               <span>Mono</span>
             </label>
+            <label class="music-effect-option">
+              <input type="radio" name="mtEffect" value="custom">
+              <span>Custom</span>
+            </label>
           </div>
           <p class="field-hint">Restarts the current track from the same position with the new effect applied &mdash; there's a brief skip in audio while it switches over.</p>
+
+          <div id="mtEffectSliders" class="music-effect-sliders" style="display:none;"></div>
         </div>
 
         <div class="card">
@@ -457,6 +463,23 @@
         </div>
         <p class="field-hint">Shows under the bot's name in the member list, e.g. &ldquo;Playing your commands&rdquo;. Saved and reapplied automatically every time the bot connects.</p>
         <p class="form-msg" id="presenceMsg"></p>
+      </div>
+
+      <div class="card" id="ttsSettingsCard" style="display:none;">
+        <h2 class="card-title">TTS voice</h2>
+        <p class="field-hint">How <span class="mono">!tts</span> sounds. Volume/speed/voice apply to everyone it reads; tone/pitch only shape your own messages.</p>
+        <div class="field-grid">
+          <div>
+            <label class="field-label" for="ttsVoiceSelect">Voice</label>
+            <select id="ttsVoiceSelect" class="field-input"></select>
+          </div>
+          <div class="checkbox-row">
+            <input type="checkbox" id="ttsOnlyMeCheckbox">
+            <span>Only read my own messages</span>
+          </div>
+        </div>
+        <div id="ttsSliders" class="music-effect-sliders" style="display:block; margin-top:14px;"></div>
+        <p class="form-msg" id="ttsSettingsMsg"></p>
       </div>
     </section>
 

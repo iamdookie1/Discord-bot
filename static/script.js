@@ -45,6 +45,7 @@ tabs.forEach((tab) => {
     if (tab.dataset.tab === "bot") {
       loadBotNamePlaceholder();
       loadPresence();
+      loadTtsSettings();
     }
     if (tab.dataset.tab === "cmds") loadBuiltinCommands();
     if (tab.dataset.tab === "customcmds") loadCustomCommands();
@@ -403,6 +404,8 @@ function fmtMusicTime(seconds) {
 function createMusicController(getGuildId, els) {
   let pollTimer = null;
   let crossfadeSliderDirty = false;   // true while the user's actively dragging it — don't fight them mid-poll
+  let effectSlidersDirty = false;     // same idea, for whichever effect's parameter sliders are showing
+  let lastSliderMode = null;          // which effect the sliders were last built for — rebuild only on change
 
   function render(data) {
     const available = !!(data && data.available);
@@ -425,6 +428,7 @@ function createMusicController(getGuildId, els) {
       if (els.requester) els.requester.textContent = "";
       setEffectRadios(data.effect_mode);
       setCrossfade(data.crossfade_seconds);
+      renderEffectSliders(data);
       return;
     }
 
@@ -467,6 +471,7 @@ function createMusicController(getGuildId, els) {
 
     setEffectRadios(data.effect_mode);
     setCrossfade(data.crossfade_seconds);
+    renderEffectSliders(data);
   }
 
   function setEffectRadios(mode) {
@@ -481,6 +486,88 @@ function createMusicController(getGuildId, els) {
     const value = seconds ?? 0;
     els.crossfadeSlider.value = value;
     if (els.crossfadeValueLabel) els.crossfadeValueLabel.textContent = value > 0 ? `${value}s` : "Off";
+  }
+
+  function renderEffectSliders(data) {
+    if (!els.effectSlidersContainer) return;
+    const mode = data.effect_mode || "off";
+    const specs = (data.effect_param_specs && data.effect_param_specs[mode]) || [];
+
+    if (!specs.length) {
+      els.effectSlidersContainer.style.display = "none";
+      els.effectSlidersContainer.innerHTML = "";
+      lastSliderMode = mode;
+      return;
+    }
+
+    els.effectSlidersContainer.style.display = "block";
+
+    if (mode !== lastSliderMode) {
+      const tied = (data.effect_tied_modes || []).includes(mode);
+      const values = data.effect_params || {};
+      els.effectSlidersContainer.innerHTML = specs.map((spec) => `
+        <div class="music-effect-slider-row" data-param-id="${spec.id}">
+          <label class="field-label">
+            <span>${escapeHtml(spec.label)}</span>
+            <span class="mono effect-slider-value">${values[spec.id] ?? spec.default}${spec.unit || ""}</span>
+          </label>
+          <input type="range" class="field-range effect-slider-input" min="${spec.min}" max="${spec.max}" step="${spec.step}" value="${values[spec.id] ?? spec.default}">
+        </div>
+      `).join("") + (tied ? `
+        <label class="checkbox-row">
+          <input type="checkbox" id="effectTiedCheckbox" ${data.custom_tied !== false ? "checked" : ""}>
+          <span>Pitch tied to speed</span>
+        </label>
+      ` : "");
+
+      els.effectSlidersContainer.querySelectorAll(".effect-slider-input").forEach((input) => {
+        input.addEventListener("pointerdown", () => { effectSlidersDirty = true; });
+        input.addEventListener("input", () => {
+          const row = input.closest(".music-effect-slider-row");
+          const spec = specs.find((s) => s.id === row.dataset.paramId);
+          row.querySelector(".effect-slider-value").textContent = `${input.value}${spec.unit || ""}`;
+        });
+        input.addEventListener("change", () => {
+          effectSlidersDirty = false;
+          submitEffectParams();
+        });
+      });
+      const tiedCheckbox = els.effectSlidersContainer.querySelector("#effectTiedCheckbox");
+      if (tiedCheckbox) {
+        tiedCheckbox.addEventListener("change", () => submitEffectParams());
+      }
+      lastSliderMode = mode;
+    } else if (!effectSlidersDirty) {
+      const values = data.effect_params || {};
+      els.effectSlidersContainer.querySelectorAll(".music-effect-slider-row").forEach((row) => {
+        const spec = specs.find((s) => s.id === row.dataset.paramId);
+        if (!spec) return;
+        const value = values[spec.id] ?? spec.default;
+        row.querySelector(".effect-slider-input").value = value;
+        row.querySelector(".effect-slider-value").textContent = `${value}${spec.unit || ""}`;
+      });
+      const tiedCheckbox = els.effectSlidersContainer.querySelector("#effectTiedCheckbox");
+      if (tiedCheckbox) tiedCheckbox.checked = data.custom_tied !== false;
+    }
+  }
+
+  async function submitEffectParams() {
+    const guildId = getGuildId();
+    if (!guildId || !els.effectSlidersContainer) return;
+    const params = {};
+    els.effectSlidersContainer.querySelectorAll(".music-effect-slider-row").forEach((row) => {
+      params[row.dataset.paramId] = Number(row.querySelector(".effect-slider-input").value);
+    });
+    const tiedCheckbox = els.effectSlidersContainer.querySelector("#effectTiedCheckbox");
+    const body = { guild_id: guildId, params };
+    if (tiedCheckbox) body.tied = tiedCheckbox.checked;
+    const data = await api("/api/music/effect_params", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!data.ok) setMsg(els.msg, data.error || "Couldn't update that.", "error");
+    poll();
   }
 
   async function poll() {
@@ -665,6 +752,7 @@ const musicTabController = createMusicController(() => musicTabServerSelect.valu
   queueList: document.getElementById("mtQueueList"),
   msg: document.getElementById("mtMsg"),
   effectRadios: () => document.querySelectorAll('input[name="mtEffect"]'),
+  effectSlidersContainer: document.getElementById("mtEffectSliders"),
   crossfadeSlider: document.getElementById("mtCrossfadeSlider"),
   crossfadeValueLabel: document.getElementById("mtCrossfadeValue"),
 });
@@ -831,6 +919,77 @@ clearPresenceBtn.addEventListener("click", () => {
   presenceText.value = "";
   savePresence(presenceType.value, "");
 });
+
+// ---------- bot tab: tts voice settings ----------
+
+const ttsSettingsCard = document.getElementById("ttsSettingsCard");
+const ttsVoiceSelect = document.getElementById("ttsVoiceSelect");
+const ttsOnlyMeCheckbox = document.getElementById("ttsOnlyMeCheckbox");
+const ttsSliders = document.getElementById("ttsSliders");
+const ttsSettingsMsg = document.getElementById("ttsSettingsMsg");
+
+let ttsSlidersDirty = false;
+let ttsSlidersBuilt = false;
+
+async function loadTtsSettings() {
+  const data = await api("/api/tts/settings");
+  if (!data.available) {
+    ttsSettingsCard.style.display = "none";
+    return;
+  }
+  ttsSettingsCard.style.display = "block";
+
+  if (ttsVoiceSelect.options.length !== (data.voices || []).length) {
+    ttsVoiceSelect.innerHTML = data.voices.map((v) => `<option value="${v.slot}">${escapeHtml(v.label)}</option>`).join("");
+  }
+  ttsVoiceSelect.value = data.settings.voice_slot;
+  ttsOnlyMeCheckbox.checked = !!data.settings.only_me;
+
+  if (!ttsSlidersBuilt) {
+    ttsSliders.innerHTML = data.specs.map((spec) => `
+      <div class="music-effect-slider-row" data-param-id="${spec.id}">
+        <label class="field-label">
+          <span>${escapeHtml(spec.label)}</span>
+          <span class="mono tts-slider-value">${data.settings[spec.id]}${spec.unit || ""}</span>
+        </label>
+        <input type="range" class="field-range tts-slider-input" min="${spec.min}" max="${spec.max}" step="${spec.step}" value="${data.settings[spec.id]}">
+      </div>
+    `).join("");
+    ttsSliders.querySelectorAll(".tts-slider-input").forEach((input) => {
+      const specId = input.closest(".music-effect-slider-row").dataset.paramId;
+      const spec = data.specs.find((s) => s.id === specId);
+      input.addEventListener("pointerdown", () => { ttsSlidersDirty = true; });
+      input.addEventListener("input", () => {
+        input.closest(".music-effect-slider-row").querySelector(".tts-slider-value").textContent = `${input.value}${spec.unit || ""}`;
+      });
+      input.addEventListener("change", () => {
+        ttsSlidersDirty = false;
+        saveTtsSettings({ [specId]: Number(input.value) });
+      });
+    });
+    ttsSlidersBuilt = true;
+  } else if (!ttsSlidersDirty) {
+    ttsSliders.querySelectorAll(".music-effect-slider-row").forEach((row) => {
+      const spec = data.specs.find((s) => s.id === row.dataset.paramId);
+      if (!spec) return;
+      row.querySelector(".tts-slider-input").value = data.settings[spec.id];
+      row.querySelector(".tts-slider-value").textContent = `${data.settings[spec.id]}${spec.unit || ""}`;
+    });
+  }
+}
+
+async function saveTtsSettings(updates) {
+  const data = await api("/api/tts/settings", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(updates),
+  });
+  if (!data.ok) setMsg(ttsSettingsMsg, data.error || "Couldn't save that.", "error");
+  else setMsg(ttsSettingsMsg, "Saved.", "success");
+}
+
+ttsVoiceSelect.addEventListener("change", () => saveTtsSettings({ voice_slot: Number(ttsVoiceSelect.value) }));
+ttsOnlyMeCheckbox.addEventListener("change", () => saveTtsSettings({ only_me: ttsOnlyMeCheckbox.checked }));
 
 // ---------- cmds tab ----------
 
