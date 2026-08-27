@@ -159,10 +159,11 @@ def _filter_custom(p):
 
 
 # mode -> function(params_dict) -> ffmpeg -af filter chain string. Applied
-# by rebuilding the audio source (see _start_source) — an ffmpeg filter
-# can't be changed on an already-running process, so switching effects
-# (or tweaking a slider) on the currently-playing track means restarting
-# it from its current position.
+# by building a fresh audio source (see _start_source/_apply_effect_live) —
+# an ffmpeg filter can't be changed on an already-running process, so
+# switching effects (or tweaking a slider) on the currently-playing track
+# means building a new source at its current position and hot-swapping it
+# in, not stopping and restarting playback.
 _EFFECT_BUILDERS = {
     "nightcore": _filter_nightcore,
     "vaporwave": _filter_vaporwave,
@@ -267,6 +268,12 @@ PREFETCH_NICENESS = 10
 
 CROSSFADE_MIN_SECONDS = 0
 CROSSFADE_MAX_SECONDS = 10
+
+# Effect mode/slider changes hot-swap in a freshly-filtered source (see
+# _apply_effect_live) instead of stopping and restarting the track — this
+# is that swap's own short blend window, purely to smooth over the filter
+# change itself, not a real crossfade between two different songs.
+EFFECT_SWAP_FADE_SECONDS = 0.2
 
 _SPOTIFY_TRACK_RE = re.compile(r"open\.spotify\.com/(?:intl-\w+/)?track/([A-Za-z0-9]+)")
 _SPOTIFY_OTHER_RE = re.compile(r"open\.spotify\.com/(?:intl-\w+/)?(album|playlist|artist)/([A-Za-z0-9]+)")
@@ -757,6 +764,45 @@ class _CrossfadeSource(discord.AudioSource):
                 src.cleanup()
             except Exception:
                 pass
+
+
+def _apply_effect_live(guild: discord.Guild, voice_client: discord.VoiceClient, state: "GuildMusicState") -> bool:
+    """Swaps in a freshly-filtered source for the currently playing track
+    without ever stopping playback. No re-extraction needed — the track is
+    already streaming right now, so its "url"/"http_headers" are still
+    good — just a new ffmpeg process seeked to the current position with
+    the new filter, hot-swapped in via the same _CrossfadeSource trick
+    real track-to-track crossfades use (a VoiceClient.source assignment,
+    not stop()/play()). The old source keeps playing right up until the
+    swap completes, so nothing ever pauses or restarts."""
+    track = state.current
+    if not track or not state.source:
+        return False
+
+    before_options = FFMPEG_OPTIONS["before_options"]
+    headers = track.get("http_headers") or {}
+    if headers:
+        header_str = "".join(f"{k}: {v}\r\n" for k, v in headers.items())
+        before_options += f' -headers "{header_str}"'
+    seek = _elapsed(state)
+    if seek > 0:
+        before_options += f" -ss {seek:.2f}"
+
+    options = FFMPEG_OPTIONS["options"]
+    effect_filter = _effect_filter_for(state)
+    if effect_filter:
+        options += f' -af "{effect_filter}"'
+
+    incoming = discord.PCMVolumeTransformer(
+        discord.FFmpegPCMAudio(track["url"], before_options=before_options, options=options),
+        volume=state.volume,
+    )
+
+    fade_frames = max(1, round(EFFECT_SWAP_FADE_SECONDS * 50))  # 50 frames/sec — 20ms each
+    mix = _CrossfadeSource(state.source, incoming, fade_frames)
+    voice_client.source = mix
+    state.source = mix
+    return True
 
 
 def _schedule_crossfade(guild: discord.Guild, voice_client: discord.VoiceClient, state: "GuildMusicState", track: dict):
@@ -1332,8 +1378,9 @@ def web_loop_cycle(client: discord.Client, guild_id: str) -> dict:
 
 def web_set_effect(client: discord.Client, guild_id: str, mode: str) -> dict:
     """Changes the effect for future tracks, and — if something's playing
-    right now — restarts it in place (same track, same position) so the
-    change is heard immediately instead of only from the next song on."""
+    right now — hot-swaps it in immediately (see _apply_effect_live), so
+    the change is heard right away without pausing or restarting the
+    track."""
     if mode not in EFFECT_MODES:
         return {"ok": False, "error": "Unknown effect mode."}
     guild = client.get_guild(int(guild_id)) if client else None
@@ -1343,21 +1390,17 @@ def web_set_effect(client: discord.Client, guild_id: str, mode: str) -> dict:
     state.effect_mode = mode
 
     vc = guild.voice_client if guild else None
-    if not vc or not state.current or state.pending_restart:
-        return {"ok": True, "effect_mode": mode}
-
-    state.pending_restart = {"track": state.current, "elapsed": _elapsed(state)}
-    _cancel_crossfade_task(state)  # _resume_after_restart -> _start_source reschedules it fresh
-    vc.stop()
+    if vc:
+        _apply_effect_live(guild, vc, state)
     return {"ok": True, "effect_mode": mode}
 
 
 def web_set_effect_params(client: discord.Client, guild_id: str, params: dict, tied=None) -> dict:
     """Updates the currently-active effect's sliders (e.g. how much reverb,
-    how fast custom mode's speed is) and, same as web_set_effect, restarts
-    the current track in place so it's heard immediately. Only ever
+    how fast custom mode's speed is) and, same as web_set_effect, hot-swaps
+    the change into the currently playing track immediately. Only ever
     touches the mode that's actually active — sliders for other modes are
-    just remembered for next time they're selected, no restart needed."""
+    just remembered for next time they're selected, no swap needed."""
     guild = client.get_guild(int(guild_id)) if client else None
     state = _state(int(guild_id))
     mode = state.effect_mode
@@ -1373,12 +1416,8 @@ def web_set_effect_params(client: discord.Client, guild_id: str, params: dict, t
         state.custom_tied = bool(tied)
 
     vc = guild.voice_client if guild else None
-    if not vc or not state.current or state.pending_restart:
-        return {"ok": True, "effect_params": clamped, "custom_tied": state.custom_tied}
-
-    state.pending_restart = {"track": state.current, "elapsed": _elapsed(state)}
-    _cancel_crossfade_task(state)
-    vc.stop()
+    if vc:
+        _apply_effect_live(guild, vc, state)
     return {"ok": True, "effect_params": clamped, "custom_tied": state.custom_tied}
 
 
