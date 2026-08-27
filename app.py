@@ -430,9 +430,9 @@ def commands_custom_delete(name):
 def get_guild_settings():
     guild_id = request.args.get("guild_id", "")
     if not guild_id:
-        return jsonify({"music_channel": None, "modlog_channel": None})
+        return jsonify({"music_channel": None, "modlog_channel": None, "mute_role": None})
     s = guild_settings.get_settings(guild_id)
-    return jsonify({"music_channel": s["music_channel"], "modlog_channel": s["modlog_channel"]})
+    return jsonify({"music_channel": s["music_channel"], "modlog_channel": s["modlog_channel"], "mute_role": s["mute_role"]})
 
 
 @app.route("/api/guild_settings", methods=["POST"])
@@ -447,6 +447,9 @@ def set_guild_settings():
     if "modlog_channel" in data:
         val = data["modlog_channel"]
         guild_settings.set_modlog_channel(guild_id, int(val) if val else None)
+    if "mute_role" in data:
+        val = data["mute_role"]
+        guild_settings.set_mute_role(guild_id, int(val) if val else None)
     return jsonify({"ok": True})
 
 
@@ -470,13 +473,214 @@ def moderation_action():
     action = data.get("action", "")
     reason = (data.get("reason") or "").strip()
     minutes = data.get("minutes")
+    extra = (data.get("extra") or "").strip()
 
     if bot_manager.status != "online":
         return jsonify({"ok": False, "error": "Bot isn't connected yet."}), 400
     if not (guild_id and user_id and action):
         return jsonify({"ok": False, "error": "Pick a server, a user, and an action."}), 400
 
-    result = bot_manager.moderate_member(guild_id, user_id, action, reason=reason, minutes=minutes)
+    result = bot_manager.moderate_member(guild_id, user_id, action, reason=reason, minutes=minutes, extra=extra)
+    return jsonify(result), (200 if result.get("ok") else 400)
+
+
+@app.route("/api/moderation/user_action", methods=["POST"])
+def moderation_user_action():
+    """Ban-by-ID / unban — unlike /api/moderation/action, these never
+    require the target to actually be a member of the server."""
+    data = request.get_json(force=True, silent=True) or {}
+    guild_id = data.get("guild_id", "")
+    user_id = data.get("user_id", "")
+    action = data.get("action", "")
+    reason = (data.get("reason") or "").strip()
+
+    if bot_manager.status != "online":
+        return jsonify({"ok": False, "error": "Bot isn't connected yet."}), 400
+    if not (guild_id and user_id and action):
+        return jsonify({"ok": False, "error": "Pick a server, a user, and an action."}), 400
+
+    result = bot_manager.moderate_user_id(guild_id, user_id, action, reason=reason)
+    return jsonify(result), (200 if result.get("ok") else 400)
+
+
+@app.route("/api/moderation/channel_action", methods=["POST"])
+def moderation_channel_action():
+    data = request.get_json(force=True, silent=True) or {}
+    guild_id = data.get("guild_id", "")
+    channel_id = data.get("channel_id", "")
+    action = data.get("action", "")
+    extra = data.get("extra", "")
+
+    if bot_manager.status != "online":
+        return jsonify({"ok": False, "error": "Bot isn't connected yet."}), 400
+    if not (guild_id and channel_id and action):
+        return jsonify({"ok": False, "error": "Pick a server, a channel, and an action."}), 400
+
+    result = bot_manager.moderate_channel(guild_id, channel_id, action, extra=extra)
+    return jsonify(result), (200 if result.get("ok") else 400)
+
+
+@app.route("/api/moderation/pin", methods=["POST"])
+def moderation_pin():
+    data = request.get_json(force=True, silent=True) or {}
+    guild_id = data.get("guild_id", "")
+    channel_id = data.get("channel_id", "")
+    message_id = data.get("message_id", "")
+    pin = bool(data.get("pin", True))
+
+    if bot_manager.status != "online":
+        return jsonify({"ok": False, "error": "Bot isn't connected yet."}), 400
+    if not (guild_id and channel_id and message_id):
+        return jsonify({"ok": False, "error": "Pick a server, a channel, and a message ID."}), 400
+
+    result = bot_manager.set_pin(guild_id, channel_id, message_id, pin)
+    return jsonify(result), (200 if result.get("ok") else 400)
+
+
+@app.route("/api/moderation/purge_user", methods=["POST"])
+def moderation_purge_user():
+    data = request.get_json(force=True, silent=True) or {}
+    guild_id = data.get("guild_id", "")
+    channel_id = data.get("channel_id", "")
+    user_id = data.get("user_id", "")
+    try:
+        count = int(data.get("count", 10))
+    except (TypeError, ValueError):
+        count = 10
+
+    if bot_manager.status != "online":
+        return jsonify({"ok": False, "error": "Bot isn't connected yet."}), 400
+    if not (guild_id and channel_id and user_id):
+        return jsonify({"ok": False, "error": "Pick a server, a channel, and a user."}), 400
+
+    result = bot_manager.purge_user_messages(guild_id, channel_id, user_id, count)
+    return jsonify(result), (200 if result.get("ok") else 400)
+
+
+@app.route("/api/moderation/banlist", methods=["GET"])
+def moderation_banlist():
+    guild_id = request.args.get("guild_id", "")
+    if bot_manager.status != "online":
+        return jsonify({"ok": False, "error": "Bot isn't connected yet."}), 400
+    if not guild_id:
+        return jsonify({"ok": False, "error": "Pick a server first."}), 400
+    result = bot_manager.get_ban_list(guild_id)
+    return jsonify(result), (200 if result.get("ok") else 400)
+
+
+# ---------------- roles ----------------
+
+@app.route("/api/roles", methods=["GET"])
+def roles_list():
+    guild_id = request.args.get("guild_id", "")
+    if not guild_id:
+        return jsonify([])
+    return jsonify(bot_manager.list_roles(guild_id))
+
+
+@app.route("/api/roles", methods=["POST"])
+def roles_create():
+    data = request.get_json(force=True, silent=True) or {}
+    guild_id = data.get("guild_id", "")
+    name = (data.get("name") or "").strip()
+
+    if bot_manager.status != "online":
+        return jsonify({"ok": False, "error": "Bot isn't connected yet."}), 400
+    if not (guild_id and name):
+        return jsonify({"ok": False, "error": "Pick a server and enter a role name."}), 400
+
+    result = bot_manager.create_role(guild_id, name)
+    return jsonify(result), (200 if result.get("ok") else 400)
+
+
+@app.route("/api/roles", methods=["DELETE"])
+def roles_delete():
+    data = request.get_json(force=True, silent=True) or {}
+    guild_id = data.get("guild_id", "")
+    role_id = data.get("role_id", "")
+
+    if bot_manager.status != "online":
+        return jsonify({"ok": False, "error": "Bot isn't connected yet."}), 400
+    if not (guild_id and role_id):
+        return jsonify({"ok": False, "error": "Pick a server and a role."}), 400
+
+    result = bot_manager.delete_role(guild_id, role_id)
+    return jsonify(result), (200 if result.get("ok") else 400)
+
+
+# ---------------- channels & categories ----------------
+
+@app.route("/api/channels_full", methods=["GET"])
+def channels_full():
+    guild_id = request.args.get("guild_id", "")
+    if not guild_id:
+        return jsonify({"categories": [], "channels": []})
+    return jsonify(bot_manager.list_channels_full(guild_id))
+
+
+@app.route("/api/channels", methods=["POST"])
+def channels_create():
+    data = request.get_json(force=True, silent=True) or {}
+    guild_id = data.get("guild_id", "")
+    name = (data.get("name") or "").strip()
+    channel_type = data.get("type", "text")
+    category_id = data.get("category_id") or ""
+
+    if bot_manager.status != "online":
+        return jsonify({"ok": False, "error": "Bot isn't connected yet."}), 400
+    if not (guild_id and name):
+        return jsonify({"ok": False, "error": "Pick a server and enter a name."}), 400
+    if channel_type not in ("text", "voice", "category"):
+        return jsonify({"ok": False, "error": "Unknown channel type."}), 400
+
+    result = bot_manager.create_channel(guild_id, name, channel_type, category_id=category_id)
+    return jsonify(result), (200 if result.get("ok") else 400)
+
+
+@app.route("/api/channels/rename", methods=["POST"])
+def channels_rename():
+    data = request.get_json(force=True, silent=True) or {}
+    guild_id = data.get("guild_id", "")
+    channel_id = data.get("channel_id", "")
+    name = (data.get("name") or "").strip()
+
+    if bot_manager.status != "online":
+        return jsonify({"ok": False, "error": "Bot isn't connected yet."}), 400
+    if not (guild_id and channel_id and name):
+        return jsonify({"ok": False, "error": "Pick a server, a channel, and a new name."}), 400
+
+    result = bot_manager.rename_channel(guild_id, channel_id, name)
+    return jsonify(result), (200 if result.get("ok") else 400)
+
+
+@app.route("/api/channels/move", methods=["POST"])
+def channels_move():
+    data = request.get_json(force=True, silent=True) or {}
+    guild_id = data.get("guild_id", "")
+    channel_id = data.get("channel_id", "")
+    category_id = data.get("category_id") or ""
+
+    if bot_manager.status != "online":
+        return jsonify({"ok": False, "error": "Bot isn't connected yet."}), 400
+    if not (guild_id and channel_id):
+        return jsonify({"ok": False, "error": "Pick a server and a channel."}), 400
+
+    result = bot_manager.move_channel(guild_id, channel_id, category_id=category_id)
+    return jsonify(result), (200 if result.get("ok") else 400)
+
+
+@app.route("/api/channels/delete", methods=["POST"])
+def channels_delete():
+    data = request.get_json(force=True, silent=True) or {}
+    guild_id = data.get("guild_id", "")
+    channel_id = data.get("channel_id", "")
+
+    if bot_manager.status != "online":
+        return jsonify({"ok": False, "error": "Bot isn't connected yet."}), 400
+    if not (guild_id and channel_id):
+        return jsonify({"ok": False, "error": "Pick a server and a channel."}), 400
+
+    result = bot_manager.delete_channel(guild_id, channel_id)
     return jsonify(result), (200 if result.get("ok") else 400)
 
 

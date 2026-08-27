@@ -248,12 +248,14 @@ class BotManager:
         return result or {"ok": False, "error": "Bot isn't connected."}
 
     # ---------- moderation (Control Deck web panel) ----------
+    # Same underlying actions as the chat moderation commands, but triggered
+    # from the web UI instead of a Discord message. Split across a few
+    # methods by what they need to look up: a member already in the server
+    # (moderate_member), just a raw user ID (moderate_user_id — works even
+    # for someone who's never joined, e.g. banid/unban), a channel
+    # (moderate_channel, pin_message), or neither (roles, ban list).
 
-    def moderate_member(self, guild_id: str, user_id: str, action: str, reason: str = "", minutes=None) -> dict:
-        """Same underlying actions as the chat moderation commands, but
-        triggered from the web UI instead of a Discord message — used by
-        the Cmds tab's moderation panel. Logs to the server's mod-log
-        channel too, same as the chat versions."""
+    def moderate_member(self, guild_id: str, user_id: str, action: str, reason: str = "", minutes=None, extra: str = "") -> dict:
         async def _do():
             guild = self.client.get_guild(int(guild_id))
             if not guild:
@@ -266,17 +268,67 @@ class BotManager:
                 return {"ok": False, "error": f"Couldn't find that member: {exc}"}
 
             log_reason = reason or None
+            skip_modlog = False
             try:
                 if action == "kick":
                     await member.kick(reason=log_reason)
                 elif action == "ban":
                     await member.ban(reason=log_reason, delete_message_days=0)
+                elif action == "softban":
+                    await member.ban(reason=log_reason, delete_message_days=1)
+                    await guild.unban(member, reason="Softban cleanup")
                 elif action == "timeout":
                     mins = max(1, min(int(minutes or 10), 40320))
                     await member.timeout(datetime.timedelta(minutes=mins), reason=log_reason)
                     log_reason = f"{mins} minute(s)" + (f" — {reason}" if reason else "")
+                elif action == "untimeout":
+                    await member.timeout(None)
+                    skip_modlog = True
                 elif action == "clearnick":
                     await member.edit(nick=None)
+                elif action == "nick":
+                    new_nick = (extra or "").strip()[:32]
+                    await member.edit(nick=new_nick or None)
+                    log_reason = new_nick or "(cleared)"
+                elif action == "addrole":
+                    role = guild.get_role(int(extra)) if extra else None
+                    if not role:
+                        return {"ok": False, "error": "Pick a role first."}
+                    await member.add_roles(role, reason=log_reason)
+                    log_reason = role.name
+                elif action == "removerole":
+                    role = guild.get_role(int(extra)) if extra else None
+                    if not role:
+                        return {"ok": False, "error": "Pick a role first."}
+                    await member.remove_roles(role, reason=log_reason)
+                    log_reason = role.name
+                elif action == "mute":
+                    role_id = guild_settings.get_mute_role(guild.id)
+                    role = guild.get_role(role_id) if role_id else None
+                    if not role:
+                        return {"ok": False, "error": "No mute role configured yet — set one below first."}
+                    await member.add_roles(role, reason=log_reason)
+                elif action == "unmute":
+                    role_id = guild_settings.get_mute_role(guild.id)
+                    role = guild.get_role(role_id) if role_id else None
+                    if not role:
+                        return {"ok": False, "error": "No mute role configured yet — set one below first."}
+                    await member.remove_roles(role, reason=log_reason)
+                    skip_modlog = True
+                elif action == "tempban":
+                    mins = max(1, min(float(minutes or 10), 44640))
+                    user_id_int = member.id
+                    await member.ban(reason=log_reason, delete_message_days=0)
+                    log_reason = f"{mins:g}m" + (f" — {reason}" if reason else "")
+
+                    async def _unban_later():
+                        try:
+                            await asyncio.sleep(mins * 60)
+                            await guild.unban(discord.Object(id=user_id_int), reason="Tempban expired")
+                        except (discord.HTTPException, asyncio.CancelledError):
+                            pass
+
+                    asyncio.create_task(_unban_later())
                 elif action == "warn":
                     key = f"{guild.id}:{member.id}"
                     data = bot_commands._load_warnings()
@@ -291,6 +343,20 @@ class BotManager:
                     data = bot_commands._load_warnings()
                     data.pop(key, None)
                     bot_commands._save_warnings(data)
+                elif action == "warnremove":
+                    try:
+                        index = int(extra)
+                    except (TypeError, ValueError):
+                        return {"ok": False, "error": "Pick a warning number first."}
+                    key = f"{guild.id}:{member.id}"
+                    data = bot_commands._load_warnings()
+                    entries = data.get(key, [])
+                    if not (1 <= index <= len(entries)):
+                        return {"ok": False, "error": f"No warning #{index}."}
+                    removed = entries.pop(index - 1)
+                    data[key] = entries
+                    bot_commands._save_warnings(data)
+                    log_reason = removed["reason"]
                 else:
                     return {"ok": False, "error": "Unknown action."}
             except discord.Forbidden:
@@ -298,7 +364,290 @@ class BotManager:
             except discord.HTTPException as exc:
                 return {"ok": False, "error": f"Discord rejected that: {exc.text}"}
 
-            await _post_modlog(guild, action.title(), member, log_reason)
+            if not skip_modlog:
+                await _post_modlog(guild, action.title(), member, log_reason)
+            return {"ok": True}
+
+        result = self._run_coro(_do(), default=None)
+        return result or {"ok": False, "error": "Bot isn't connected."}
+
+    def moderate_user_id(self, guild_id: str, user_id: str, action: str, reason: str = "") -> dict:
+        """For actions that work on a raw user ID without the person being
+        a current member — banning someone by ID, or unbanning."""
+        async def _do():
+            guild = self.client.get_guild(int(guild_id))
+            if not guild:
+                return {"ok": False, "error": "Server not found — is the bot still in it?"}
+            try:
+                uid = int(user_id)
+            except ValueError:
+                return {"ok": False, "error": "That doesn't look like a user ID."}
+
+            try:
+                if action == "banid":
+                    await guild.ban(discord.Object(id=uid), reason=reason or None)
+                elif action == "unban":
+                    await guild.unban(discord.Object(id=uid), reason=reason or None)
+                else:
+                    return {"ok": False, "error": "Unknown action."}
+            except discord.NotFound:
+                return {"ok": False, "error": "That user isn't banned."}
+            except discord.Forbidden:
+                return {"ok": False, "error": "I don't have permission to do that."}
+            except discord.HTTPException as exc:
+                return {"ok": False, "error": f"Discord rejected that: {exc.text}"}
+            return {"ok": True}
+
+        result = self._run_coro(_do(), default=None)
+        return result or {"ok": False, "error": "Bot isn't connected."}
+
+    def moderate_channel(self, guild_id: str, channel_id: str, action: str, extra: str = "") -> dict:
+        """Channel-scoped moderation: purge, slowmode, lock, unlock,
+        announce. All operate on the given channel, not wherever the
+        request happened to come from (there's no "current channel" in the
+        web UI)."""
+        async def _do():
+            guild = self.client.get_guild(int(guild_id))
+            if not guild:
+                return {"ok": False, "error": "Server not found — is the bot still in it?"}
+            channel = guild.get_channel(int(channel_id))
+            if not channel:
+                return {"ok": False, "error": "Channel not found."}
+
+            try:
+                if action == "purge":
+                    count = max(1, min(int(extra or 10), 100))
+                    deleted = await channel.purge(limit=count)
+                    return {"ok": True, "deleted": len(deleted)}
+                elif action == "slowmode":
+                    seconds = max(0, min(int(extra or 0), 21600))
+                    await channel.edit(slowmode_delay=seconds)
+                elif action == "lock":
+                    await channel.set_permissions(guild.default_role, send_messages=False)
+                elif action == "unlock":
+                    await channel.set_permissions(guild.default_role, send_messages=None)
+                elif action == "announce":
+                    text = (extra or "").strip()
+                    if not text:
+                        return {"ok": False, "error": "Write a message to announce."}
+                    await channel.send(text)
+                else:
+                    return {"ok": False, "error": "Unknown action."}
+            except discord.Forbidden:
+                return {"ok": False, "error": "I need Manage Channels/Messages here to do that."}
+            except discord.HTTPException as exc:
+                return {"ok": False, "error": f"Discord rejected that: {exc.text}"}
+            return {"ok": True}
+
+        result = self._run_coro(_do(), default=None)
+        return result or {"ok": False, "error": "Bot isn't connected."}
+
+    def set_pin(self, guild_id: str, channel_id: str, message_id: str, pin: bool) -> dict:
+        async def _do():
+            guild = self.client.get_guild(int(guild_id))
+            if not guild:
+                return {"ok": False, "error": "Server not found — is the bot still in it?"}
+            channel = guild.get_channel(int(channel_id))
+            if not channel:
+                return {"ok": False, "error": "Channel not found."}
+            try:
+                message = await channel.fetch_message(int(message_id))
+                if pin:
+                    await message.pin()
+                else:
+                    await message.unpin()
+            except discord.NotFound:
+                return {"ok": False, "error": "That message ID wasn't found in that channel."}
+            except (discord.Forbidden, discord.HTTPException) as exc:
+                return {"ok": False, "error": f"Couldn't do that: {getattr(exc, 'text', exc)}"}
+            except ValueError:
+                return {"ok": False, "error": "That doesn't look like a message ID."}
+            return {"ok": True}
+
+        result = self._run_coro(_do(), default=None)
+        return result or {"ok": False, "error": "Bot isn't connected."}
+
+    def purge_user_messages(self, guild_id: str, channel_id: str, user_id: str, count: int) -> dict:
+        async def _do():
+            guild = self.client.get_guild(int(guild_id))
+            if not guild:
+                return {"ok": False, "error": "Server not found — is the bot still in it?"}
+            channel = guild.get_channel(int(channel_id))
+            if not channel:
+                return {"ok": False, "error": "Channel not found."}
+            try:
+                target_id = int(user_id)
+            except ValueError:
+                return {"ok": False, "error": "That doesn't look like a user ID."}
+            capped = max(1, min(count, 100))
+            try:
+                deleted = await channel.purge(limit=min(capped * 5, 500), check=lambda m: m.author.id == target_id)
+            except discord.Forbidden:
+                return {"ok": False, "error": "I need Manage Messages here to do that."}
+            except discord.HTTPException as exc:
+                return {"ok": False, "error": f"Discord rejected that: {exc.text}"}
+            return {"ok": True, "deleted": len(deleted)}
+
+        result = self._run_coro(_do(), default=None)
+        return result or {"ok": False, "error": "Bot isn't connected."}
+
+    def get_ban_list(self, guild_id: str) -> dict:
+        async def _do():
+            guild = self.client.get_guild(int(guild_id))
+            if not guild:
+                return {"ok": False, "error": "Server not found — is the bot still in it?"}
+            try:
+                bans = [entry async for entry in guild.bans(limit=100)]
+            except discord.HTTPException as exc:
+                return {"ok": False, "error": f"Couldn't fetch the ban list: {exc.text}"}
+            return {"ok": True, "bans": [{"id": str(b.user.id), "name": str(b.user), "reason": b.reason or ""} for b in bans]}
+
+        result = self._run_coro(_do(), default=None)
+        return result or {"ok": False, "error": "Bot isn't connected."}
+
+    # ---------- roles ----------
+
+    def list_roles(self, guild_id: str):
+        if not (self.client and self.status == "online"):
+            return []
+        guild = discord.utils.get(self.client.guilds, id=int(guild_id))
+        if not guild:
+            return []
+        return [
+            {"id": str(r.id), "name": r.name}
+            for r in sorted(guild.roles, key=lambda r: r.position, reverse=True)
+            if not r.is_default() and not r.managed
+        ]
+
+    def create_role(self, guild_id: str, name: str) -> dict:
+        async def _do():
+            guild = self.client.get_guild(int(guild_id))
+            if not guild:
+                return {"ok": False, "error": "Server not found — is the bot still in it?"}
+            try:
+                role = await guild.create_role(name=name[:100], reason="Created from Control Deck")
+            except discord.HTTPException as exc:
+                return {"ok": False, "error": f"Couldn't create that role: {exc.text}"}
+            return {"ok": True, "role": {"id": str(role.id), "name": role.name}}
+
+        result = self._run_coro(_do(), default=None)
+        return result or {"ok": False, "error": "Bot isn't connected."}
+
+    def delete_role(self, guild_id: str, role_id: str) -> dict:
+        async def _do():
+            guild = self.client.get_guild(int(guild_id))
+            if not guild:
+                return {"ok": False, "error": "Server not found — is the bot still in it?"}
+            role = guild.get_role(int(role_id))
+            if not role:
+                return {"ok": False, "error": "That role doesn't exist anymore."}
+            try:
+                await role.delete(reason="Deleted from Control Deck")
+            except discord.HTTPException as exc:
+                return {"ok": False, "error": f"Couldn't delete that role: {exc.text}"}
+            return {"ok": True}
+
+        result = self._run_coro(_do(), default=None)
+        return result or {"ok": False, "error": "Bot isn't connected."}
+
+    # ---------- channels & categories ----------
+
+    def list_channels_full(self, guild_id: str) -> dict:
+        """Everything the Channels/Categories tabs need in one call:
+        every category, plus every text/voice channel with which category
+        (if any) it's under."""
+        if not (self.client and self.status == "online"):
+            return {"categories": [], "channels": []}
+        guild = discord.utils.get(self.client.guilds, id=int(guild_id))
+        if not guild:
+            return {"categories": [], "channels": []}
+        categories = [{"id": str(c.id), "name": c.name} for c in guild.categories]
+        channels = [
+            {
+                "id": str(c.id),
+                "name": c.name,
+                "type": "voice" if isinstance(c, discord.VoiceChannel) else "text",
+                "category_id": str(c.category_id) if c.category_id else None,
+            }
+            for c in list(guild.text_channels) + list(guild.voice_channels)
+        ]
+        return {"categories": categories, "channels": channels}
+
+    def create_channel(self, guild_id: str, name: str, channel_type: str, category_id: str = "") -> dict:
+        async def _do():
+            guild = self.client.get_guild(int(guild_id))
+            if not guild:
+                return {"ok": False, "error": "Server not found — is the bot still in it?"}
+            category = None
+            if category_id:
+                category = guild.get_channel(int(category_id))
+                if not isinstance(category, discord.CategoryChannel):
+                    return {"ok": False, "error": "That category doesn't exist anymore."}
+            try:
+                if channel_type == "category":
+                    channel = await guild.create_category(name=name[:100], reason="Created from Control Deck")
+                elif channel_type == "voice":
+                    channel = await guild.create_voice_channel(name=name[:100], category=category, reason="Created from Control Deck")
+                else:
+                    channel = await guild.create_text_channel(name=name[:100], category=category, reason="Created from Control Deck")
+            except discord.HTTPException as exc:
+                return {"ok": False, "error": f"Couldn't create that: {exc.text}"}
+            return {"ok": True, "channel": {"id": str(channel.id), "name": channel.name}}
+
+        result = self._run_coro(_do(), default=None)
+        return result or {"ok": False, "error": "Bot isn't connected."}
+
+    def rename_channel(self, guild_id: str, channel_id: str, name: str) -> dict:
+        async def _do():
+            guild = self.client.get_guild(int(guild_id))
+            if not guild:
+                return {"ok": False, "error": "Server not found — is the bot still in it?"}
+            channel = guild.get_channel(int(channel_id))
+            if not channel:
+                return {"ok": False, "error": "That channel doesn't exist anymore."}
+            try:
+                await channel.edit(name=name[:100], reason="Renamed from Control Deck")
+            except discord.HTTPException as exc:
+                return {"ok": False, "error": f"Couldn't rename that: {exc.text}"}
+            return {"ok": True}
+
+        result = self._run_coro(_do(), default=None)
+        return result or {"ok": False, "error": "Bot isn't connected."}
+
+    def move_channel(self, guild_id: str, channel_id: str, category_id: str = "") -> dict:
+        async def _do():
+            guild = self.client.get_guild(int(guild_id))
+            if not guild:
+                return {"ok": False, "error": "Server not found — is the bot still in it?"}
+            channel = guild.get_channel(int(channel_id))
+            if not channel:
+                return {"ok": False, "error": "That channel doesn't exist anymore."}
+            category = None
+            if category_id:
+                category = guild.get_channel(int(category_id))
+                if not isinstance(category, discord.CategoryChannel):
+                    return {"ok": False, "error": "That category doesn't exist anymore."}
+            try:
+                await channel.edit(category=category, reason="Moved from Control Deck")
+            except discord.HTTPException as exc:
+                return {"ok": False, "error": f"Couldn't move that: {exc.text}"}
+            return {"ok": True}
+
+        result = self._run_coro(_do(), default=None)
+        return result or {"ok": False, "error": "Bot isn't connected."}
+
+    def delete_channel(self, guild_id: str, channel_id: str) -> dict:
+        async def _do():
+            guild = self.client.get_guild(int(guild_id))
+            if not guild:
+                return {"ok": False, "error": "Server not found — is the bot still in it?"}
+            channel = guild.get_channel(int(channel_id))
+            if not channel:
+                return {"ok": False, "error": "That channel doesn't exist anymore."}
+            try:
+                await channel.delete(reason="Deleted from Control Deck")
+            except discord.HTTPException as exc:
+                return {"ok": False, "error": f"Couldn't delete that: {exc.text}"}
             return {"ok": True}
 
         result = self._run_coro(_do(), default=None)

@@ -17,7 +17,7 @@ local web UI at `http://127.0.0.1:5000` instead of the command line.
 - `voice_owner.py` — tiny shared registry so music and TTS (only one voice connection per server) take turns instead of colliding
 - `guild_settings.py` — per-server settings (RP-allowed channel, music channel, mod-log channel, mute role), keyed by guild ID
 - `bot_backup.py` — server structure snapshot/restore for the Backup tab (web UI only, no chat command)
-- `templates/`, `static/` — the UI (Home, Text, Bot, Music, Cmds, Mod, Custom, RP, Backup tabs)
+- `templates/`, `static/` — the UI (Home, Text, Bot, Music, Cmds, Mod, Channels, Categories, Fonts, Custom, RP, Backup tabs)
 - `config.json` — created automatically the first time you save a token or set a presence (kept only on your device)
 - `custom_commands.json`, `command_settings.json`, `rp_commands.json`, `warnings.json`, `server_backups.json`, `guild_settings.json`, `tts_settings.json` — created automatically as you use the app (all kept only on your device, none of it committed to git)
 - `rp_media/` — GIFs/images/converted videos uploaded from the RP tab, created automatically (kept only on your device, never committed to git)
@@ -52,7 +52,7 @@ thing `setup.sh` does automatically.
 
 ## Using the UI
 
-Open `http://127.0.0.1:5000` in your phone's browser.
+Open `http://127.0.0.1:5000` in your phone's browser. On a narrow screen the sidebar becomes a hamburger menu (top-left) instead of the full icon rail — tap it to open an off-canvas drawer with the full tab list, which closes automatically once you pick one.
 
 **Home tab**
 - Paste your bot token and hit **Save & connect**. It's written to `config.json` on your device and the bot connects immediately.
@@ -99,11 +99,26 @@ Open `http://127.0.0.1:5000` in your phone's browser.
 - Music and TTS share the bot's one voice connection per server, so only one can run at a time: `!tts` refuses to start while music is playing ("Sorry, music's playing right now"), and music commands refuse to start while TTS is on ("Sorry, TTS is on right now") — turn one off to use the other.
 - A handful of extra sound controls exist but are hidden: `!tone`, `!pitch`, `!onlytm`, `!voiceselection`, `!volume`. Same lockdown as `!allowchannelrp` above — silent no-op for anyone but Discord user ID `1409771422011887678`, left out of `!cmds`/`!help` entirely, chat-only, no web UI control. `!voiceselection <1-20>` and `!volume <0-200>` pick which of espeak-ng's built-in voices to use and how loud it is — apply to everyone TTS reads, no download needed since all 20 ship with espeak-ng already. `!tone <1-10>` and `!pitch <-100 to 100>` only change how *the owner's own* messages sound (everyone else is unaffected) — a personal flourish rather than a server-wide setting. `!onlytm` toggles reading only the owner's own messages, ignoring everyone else in the linked voice channel.
 
-**Mod tab**
-- **Music channel**: pick the voice channel `!join`/`!play` connect to for that server — they always join this channel, not wherever the caller happens to be sitting. With nothing picked, music commands are fully blocked there — not just unrestricted.
-- **Mod-log channel**: optional — pick a channel to have kicks/bans/timeouts/warns/mutes/tempbans posted there as an embed, whether they came from chat commands or from this panel.
-- **Moderate a member**: paste a user ID (not a picker — the bot doesn't request the privileged Members intent, so a full member list isn't reliably available) and hit Kick / Ban / Timeout / Warn / Clear warnings / Reset nickname. Kick and Ban ask for confirmation first. A user ID's current warnings show automatically once you tab out of the field.
-- This is the same underlying logic as the equivalent chat commands — just triggerable from the browser instead of Discord.
+**Mod tab** — every moderation command has a web equivalent here now, not just the six original ones:
+- **Server settings**: music channel, mod-log channel (optional — kicks/bans/timeouts/warns/mutes/tempbans post there as an embed), and mute role (the role `Mute`/`Unmute` below add/remove — set once here, same as `!muterole` in chat).
+- **Moderate a member**: paste a user ID (not a picker — the bot doesn't request the privileged Members intent, so a full member list isn't reliably available). Grouped into **Access** (Kick, Ban, Softban, Temp-ban, Ban by ID, Unban — the last two work even if that person isn't currently a member), **Timeout & mute** (Timeout, Remove timeout, Mute, Unmute — mute needs the mute role set above first), **Warnings** (Warn, Remove warning #, Clear warnings — a user's current warnings list itself automatically once you tab out of the User ID field), and **Identity & roles** (set/reset nickname, Add/Remove role from a dropdown of the server's roles). Kick/Ban/Softban/Temp-ban/Ban-by-ID ask for confirmation first.
+- **Moderate a channel**: pick a text channel, then Purge (bulk-delete N messages), set Slowmode, Lock/Unlock (blocks/restores `@everyone`'s Send Messages), send an Announcement, Pin/Unpin a message by ID, or purge just one user's messages out of it.
+- **Roles**: create a new role by name, or delete an existing one from the list — same permission rules as Discord (the bot can't touch a role above its own).
+- **Ban list**: shows up to 100 current bans with a one-click Unban per entry.
+- All of it is the same underlying logic as the equivalent chat commands — just triggerable from the browser instead of Discord, and logged to the mod-log channel the same way.
+
+**Channels tab** — create, rename, move, and delete text/voice channels for a server:
+- Pick a server, then **Create a channel**: name, type (Text/Voice), and an optional category to drop it into.
+- **Existing channels** lists everything with inline controls per row: a rename field + button, a category dropdown (change it and hit Move), and Delete (asks for confirmation).
+
+**Categories tab** — same idea, for categories:
+- **Create a category** by name.
+- **Existing categories** lists each with rename and delete controls. Deleting a category doesn't delete the channels inside it — same as deleting one manually in Discord, they just become uncategorized.
+
+**Fonts tab** — a text-styling toy, entirely client-side (no Discord API involved, works even while offline from the bot):
+- Pick a style from the dropdown (Bold, Italic, Bold Italic, Script, Bold Script, Fraktur, Bold Fraktur, Double-Struck, Sans-Serif ×4, Monospace, Vaporwave/Fullwidth, Small Caps, Circled, Squared ×2, Strikethrough, Underline, Upside Down, Reversed, Wide Spacing, Zalgo — 24 in total), type text, and the converted result appears live — hit **Copy result** to grab it. Most styles use the real Unicode "Mathematical Alphanumeric Symbols" block (the same trick most "fancy text" generators use), so the result is genuine text, not an image — pastes anywhere Discord (or anywhere else) accepts Unicode.
+- **Invisible characters**: zero-width and blank-rendering Unicode (zero-width space, ZWNJ, ZWJ, word joiner, BOM, Hangul filler, Braille blank, no-break/en/em space) — tap one to copy it. Useful anywhere a truly empty string gets rejected but a character that just *looks* empty doesn't.
+- **Arrows** and **Symbols & stars**: two grids of common Unicode arrows/symbols — tap any to copy it instantly.
 
 **Custom tab**
 - Create your own `!command` in Python. The code you write runs as the body of `async def run(ctx): ...`, where `ctx` gives you `ctx.send(...)` to reply, `ctx.args` (the words after the command), `ctx.content` (the raw text after it), and `ctx.message` / `ctx.author` / `ctx.channel` / `ctx.guild` as normal discord.py objects.

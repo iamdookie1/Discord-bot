@@ -34,6 +34,39 @@ body {
 
 .mono { font-family: 'JetBrains Mono', monospace; }
 
+/* ---- themed scrollbars (webkit) + Firefox fallback ---- */
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
+}
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--line);
+  border-radius: 8px;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--accent-dim); }
+
+/* ---- panel transition ---- */
+
+.panel {
+  animation: panel-in 0.18s ease;
+}
+
+@keyframes panel-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ---- focus-visible polish (keyboard nav) ---- */
+
+button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 /* ===================== layout ===================== */
 
 .app {
@@ -53,6 +86,7 @@ body {
   align-items: center;
   padding: 18px 0;
   gap: 4px;
+  overflow-y: auto;
 }
 
 .rail-brand {
@@ -114,6 +148,99 @@ body {
   text-orientation: mixed;
   letter-spacing: 0.1em;
   padding-bottom: 4px;
+}
+
+/* ---- mobile nav: hamburger + off-canvas drawer ---- */
+
+.nav-toggle {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.nav-toggle:hover { border-color: var(--accent); color: var(--accent); }
+.nav-toggle:active { transform: scale(0.94); }
+
+.rail-backdrop {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(6, 8, 13, 0.6);
+  backdrop-filter: blur(1px);
+  z-index: 40;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+
+@media (max-width: 860px) {
+  .nav-toggle { display: flex; }
+
+  .rail {
+    position: fixed;
+    inset: 0 auto 0 0;
+    width: 240px;
+    max-width: 82vw;
+    flex-direction: column;
+    align-items: stretch;
+    padding: 20px 12px;
+    gap: 2px;
+    border-right: 1px solid var(--line);
+    transform: translateX(-100%);
+    transition: transform 0.25s ease;
+    z-index: 50;
+    box-shadow: 12px 0 32px rgba(0,0,0,0.45);
+  }
+
+  .rail.is-open { transform: translateX(0); }
+
+  .rail-backdrop { display: block; }
+  .rail-backdrop.is-open { opacity: 1; pointer-events: auto; }
+
+  .rail-brand {
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-start;
+    text-align: left;
+    padding: 0 8px;
+    margin-bottom: 12px;
+  }
+
+  .rail-tab {
+    width: 100%;
+    flex-direction: row;
+    justify-content: flex-start;
+    gap: 12px;
+    padding: 13px 12px;
+    font-size: 13.5px;
+    border-radius: 9px;
+  }
+
+  .rail-spacer { flex: 0 0 12px; }
+
+  .rail-footer {
+    writing-mode: horizontal-tb;
+    text-orientation: initial;
+    padding: 10px 8px 0;
+    text-align: left;
+  }
+
+  .panel { padding: 18px 16px 44px; }
+  .readout { padding: 10px 14px; }
+}
+
+@media (max-width: 420px) {
+  .card { padding: 14px; }
+  .btn-row { gap: 6px; }
+  .btn-primary, .btn-outline, .btn-ghost { padding: 9px 12px; font-size: 12.5px; }
 }
 
 /* ---- main column ---- */
@@ -481,6 +608,120 @@ input[type="file"].field-input::file-selector-button {
   display: flex;
   gap: 6px;
   flex-shrink: 0;
+}
+
+/* ---- mod tab: settings rows / action groups ---- */
+
+.mod-setting-row {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.mod-setting-row:first-child { padding-top: 0; }
+.mod-setting-row:last-child { padding-bottom: 0; border-bottom: none; }
+
+.mod-action-group {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.mod-group-title {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin: 0 0 8px;
+}
+
+/* ---- mod tab: dynamic lists (roles, bans, channels, categories) ---- */
+
+.mod-list {
+  display: flex;
+  flex-direction: column;
+  margin-top: 8px;
+}
+
+.mod-list-empty {
+  font-size: 12px;
+  color: var(--muted);
+  padding: 6px 0;
+}
+
+.mod-list-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+  flex-wrap: wrap;
+}
+
+.mod-list-item:last-child { border-bottom: none; padding-bottom: 0; }
+.mod-list-item:first-child { padding-top: 0; }
+
+.mod-list-info {
+  flex: 1;
+  min-width: 120px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mod-list-name {
+  font-size: 12.5px;
+  color: var(--text);
+}
+
+.mod-list-sub {
+  font-size: 11px;
+  color: var(--muted);
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.mod-list-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.mod-list-actions .field-input {
+  width: auto;
+  min-width: 130px;
+}
+
+/* ---- fonts tab: tap-to-copy symbol grids ---- */
+
+.symbol-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(46px, 1fr));
+  gap: 6px;
+}
+
+.symbol-chip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 40px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 15px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s, transform 0.1s;
+}
+
+.symbol-chip:hover { border-color: var(--accent); color: var(--accent); }
+.symbol-chip:active { transform: scale(0.94); }
+
+.symbol-chip.is-copied {
+  border-color: var(--good);
+  color: var(--good);
 }
 
 /* ---- toggle switch ---- */
