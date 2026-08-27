@@ -15,8 +15,10 @@ to roughly 5 per 5 seconds). The equivalent web controls in the Flask UI
 don't go through Discord's API at all, so they can poll far more often;
 see get_state_dict()/web_*() below, called from app.py.
 """
+import array
 import asyncio
 import json
+import os
 import re
 import shutil
 import time
@@ -76,25 +78,66 @@ YTDLP_OPTIONS = {
 # rebuilding the audio source (see _start_source) — an ffmpeg filter can't
 # be changed on an already-running process, so switching effects on the
 # currently-playing track means restarting it from its current position.
+#
+# The reverb here (used by "slowed_reverb" and standalone "reverb") is a
+# handful of short, closely-spaced aecho taps rather than one long one —
+# ffmpeg has no real reverb filter (afreeverb isn't compiled into most
+# builds), and a single ~1s echo just sounds like a discrete repeat, not a
+# reverb tail. Several short (40-250ms) decaying taps read as a diffuse
+# wash instead, much closer to actual reverb.
+_REVERB_TAPS = "aecho=0.8:0.7:40|60|90|120|180|250:0.5|0.4|0.35|0.25|0.2|0.15"
 _EFFECT_FILTERS = {
     "nightcore": "asetrate=44100*1.25,aresample=44100",
-    "slowed_reverb": "asetrate=44100*0.8,aresample=44100,aecho=0.8:0.9:1000:0.3",
+    "vaporwave": "asetrate=44100*0.75,aresample=44100",
+    "chipmunk": "asetrate=44100*1.6,aresample=44100",
+    "slowed_reverb": f"asetrate=44100*0.88,aresample=44100,{_REVERB_TAPS}",
+    "reverb": _REVERB_TAPS,
+    "echo": "aecho=0.8:0.9:500|1000:0.4|0.3",
     "bass_boost": "bass=g=12",
     "8d": "apulsator=hz=0.09",
+    "muffled": "lowpass=f=500",
+    "radio": "highpass=f=300,lowpass=f=3400",
+    "karaoke": "pan=stereo|c0=c0-c1|c1=c1-c0",
+    "mono": "pan=mono|c0=0.5*c0+0.5*c1",
 }
-EFFECT_MODES = ["off", "nightcore", "slowed_reverb", "bass_boost", "8d"]
+EFFECT_MODES = ["off", "nightcore", "vaporwave", "chipmunk", "slowed_reverb", "reverb", "echo",
+                "bass_boost", "8d", "muffled", "radio", "karaoke", "mono"]
 EFFECT_LABELS = {
     "off": "Off",
     "nightcore": "Nightcore",
+    "vaporwave": "Vaporwave",
+    "chipmunk": "Chipmunk",
     "slowed_reverb": "Slowed + Reverb",
+    "reverb": "Reverb",
+    "echo": "Echo",
     "bass_boost": "Bass Boost",
     "8d": "8D Audio",
+    "muffled": "Muffled",
+    "radio": "Radio",
+    "karaoke": "Karaoke (vocal reduction)",
+    "mono": "Mono",
 }
 
 # A prefetched stream URL older than this is discarded and re-fetched fresh
 # instead of trusted — well under the hours-long expiry YouTube stream URLs
 # normally carry, just a safety margin in case a track sits queued a while.
 PREFETCH_MAX_AGE_SECONDS = 600
+
+# Waiting this long before starting the background prefetch keeps it clear
+# of the current track's own startup window (ffmpeg's initial buffer-fill
+# right after voice_client.play() is the most CPU-sensitive moment) — on a
+# phone especially, doing heavy yt-dlp work at the exact same time can
+# starve the audio player thread of CPU/GIL time and cause audible
+# stutter. The extraction thread is also deprioritized (see _extract's
+# `background` flag) as a second line of defense for the rest of the song.
+PREFETCH_DELAY_SECONDS = 5
+# How much to lower (os.nice) the background prefetch thread's scheduling
+# priority by — verified to be thread-scoped on Linux (including Termux/
+# Android), not process-wide, so it only ever affects that one lookup.
+PREFETCH_NICENESS = 10
+
+CROSSFADE_MIN_SECONDS = 0
+CROSSFADE_MAX_SECONDS = 10
 
 _SPOTIFY_TRACK_RE = re.compile(r"open\.spotify\.com/(?:intl-\w+/)?track/([A-Za-z0-9]+)")
 _SPOTIFY_OTHER_RE = re.compile(r"open\.spotify\.com/(?:intl-\w+/)?(album|playlist|artist)/([A-Za-z0-9]+)")
@@ -141,6 +184,8 @@ class GuildMusicState:
         self.text_channel = None   # last text channel !play was used in — for skip/error messages
         self.effect_mode = "off"   # off | one of EFFECT_MODES — see _EFFECT_FILTERS
         self.pending_restart = None    # {"track":, "elapsed":} set when restarting the current track
+        self.crossfade_seconds = 0.0   # 0 disables it — see _schedule_crossfade
+        self.crossfade_task = None     # asyncio.Task counting down to the next crossfade
 
 
 _states: dict[int, GuildMusicState] = {}
@@ -168,6 +213,12 @@ def _adjust_volume(state: GuildMusicState, delta: float):
     state.volume = round(min(max(state.volume + delta, MIN_VOLUME), MAX_VOLUME), 2)
     if state.source is not None:
         state.source.volume = state.volume
+
+
+def _cancel_crossfade_task(state: GuildMusicState):
+    if state.crossfade_task and not state.crossfade_task.done():
+        state.crossfade_task.cancel()
+    state.crossfade_task = None
 
 
 # ==================== formatting ====================
@@ -271,6 +322,7 @@ class MusicMenuView(discord.ui.View):
         if vc and (vc.is_playing() or vc.is_paused()):
             state = _state(guild.id)
             state.pending_restart = None
+            _cancel_crossfade_task(state)
             vc.stop()
             await interaction.response.send_message("Skipped.", ephemeral=True)
         else:
@@ -284,6 +336,7 @@ class MusicMenuView(discord.ui.View):
         state = _state(guild.id)
         vc = guild.voice_client
         state.pending_restart = None
+        _cancel_crossfade_task(state)
         state.queue.clear()
         state.loop_mode = "off"
         state.current = None
@@ -441,10 +494,22 @@ async def _maybe_resolve_spotify(query: str) -> str:
     return title
 
 
-async def _extract(query: str):
+async def _extract(query: str, background: bool = False):
     loop = asyncio.get_event_loop()
 
     def _run():
+        if background:
+            try:
+                # An absolute set, not a relative nudge like os.nice() —
+                # matters because executor threads are pooled/reused, and
+                # os.nice()'s "add N to whatever it already is" would stack
+                # higher every time a prefetch happens to reuse the same
+                # thread over a long-running session. PRIO_PROCESS + who=0
+                # is thread-scoped on Linux (verified: only the calling
+                # thread's niceness changes, not the whole process).
+                os.setpriority(os.PRIO_PROCESS, 0, PREFETCH_NICENESS)
+            except (AttributeError, OSError):
+                pass  # not available on this platform — fine, just skip the deprioritization
         with yt_dlp.YoutubeDL(YTDLP_OPTIONS) as ydl:
             info = ydl.extract_info(query, download=False)
             if info and "entries" in info:
@@ -465,6 +530,171 @@ async def _extract(query: str):
             }
 
     return await loop.run_in_executor(None, _run)
+
+
+def _mix_pcm(a: bytes, b: bytes, t: float) -> bytes:
+    """Linearly blends two 16-bit stereo PCM frames: `a` at (1-t) gain,
+    `b` at t gain. Used one 20ms frame at a time to crossfade between an
+    outgoing and incoming track's audio."""
+    if len(a) < len(b):
+        a = a + b"\x00" * (len(b) - len(a))
+    elif len(b) < len(a):
+        b = b + b"\x00" * (len(a) - len(b))
+    samples_a = array.array("h")
+    samples_a.frombytes(a)
+    samples_b = array.array("h")
+    samples_b.frombytes(b)
+    out_gain = 1.0 - t
+    mixed = array.array("h", (
+        max(-32768, min(32767, int(sa * out_gain + sb * t)))
+        for sa, sb in zip(samples_a, samples_b)
+    ))
+    return mixed.tobytes()
+
+
+class _CrossfadeSource(discord.AudioSource):
+    """Wraps an outgoing and incoming PCMVolumeTransformer and blends them
+    frame-by-frame for `fade_frames` reads (20ms each), then reads purely
+    from `incoming` from then on. Meant to be hot-swapped into a live
+    VoiceClient via `voice_client.source = ...` — NOT via stop()/play(),
+    since VoiceClient.stop() cleans up (kills) the outgoing source's ffmpeg
+    process, which would defeat the whole point of crossfading into it
+    without a gap. Swapping `.source` on a running AudioPlayer just changes
+    what the next read() pulls from, with no interruption."""
+
+    def __init__(self, outgoing: discord.PCMVolumeTransformer, incoming: discord.PCMVolumeTransformer, fade_frames: int):
+        self.outgoing = outgoing
+        self.incoming = incoming
+        self.fade_frames = max(1, fade_frames)
+        self._frame = 0
+        self._done = False
+
+    @property
+    def volume(self) -> float:
+        return self.incoming.volume
+
+    @volume.setter
+    def volume(self, value: float):
+        self.outgoing.volume = value
+        self.incoming.volume = value
+
+    def read(self) -> bytes:
+        if self._done:
+            return self.incoming.read()
+
+        out_data = self.outgoing.read()
+        in_data = self.incoming.read()
+        if not in_data:
+            # the incoming track failed or was somehow shorter than the
+            # fade window — fall back to the outgoing track rather than
+            # cutting to silence.
+            self._done = True
+            return out_data
+        if not out_data:
+            self._done = True
+            return in_data
+
+        t = min(1.0, self._frame / self.fade_frames)
+        mixed = _mix_pcm(out_data, in_data, t)
+        self._frame += 1
+        if self._frame >= self.fade_frames:
+            self._done = True
+        return mixed
+
+    def is_opus(self) -> bool:
+        return False
+
+    def cleanup(self):
+        for src in (self.outgoing, self.incoming):
+            try:
+                src.cleanup()
+            except Exception:
+                pass
+
+
+def _schedule_crossfade(guild: discord.Guild, voice_client: discord.VoiceClient, state: "GuildMusicState", track: dict):
+    """Arms a timer to start crossfading into whatever's queued next,
+    `state.crossfade_seconds` before `track` would naturally end. Safe to
+    call any time playback (re)starts or the crossfade duration changes —
+    always cancels whatever was scheduled before it. Deliberately doesn't
+    check `state.queue` here (it can gain an item — someone queuing a song
+    from the web mid-track — between now and when the timer fires); that
+    check happens at fire time instead, in _do_crossfade."""
+    _cancel_crossfade_task(state)
+    if state.crossfade_seconds <= 0:
+        return
+    duration = track.get("duration") if track else None
+    if not duration:
+        return
+    delay = duration - state.crossfade_seconds - _elapsed(state)
+    if delay <= 0.5:
+        return
+    state.crossfade_task = asyncio.create_task(_crossfade_watch(guild, voice_client, state, track, delay))
+
+
+async def _crossfade_watch(guild: discord.Guild, voice_client: discord.VoiceClient, state: "GuildMusicState", track: dict, delay: float):
+    try:
+        await asyncio.sleep(delay)
+    except asyncio.CancelledError:
+        return
+    if state.current is not track or state.pending_restart:
+        return
+    await _do_crossfade(guild, voice_client, state)
+
+
+async def _do_crossfade(guild: discord.Guild, voice_client: discord.VoiceClient, state: "GuildMusicState"):
+    if not state.queue:
+        return
+    next_track = state.queue[0]
+
+    prefetch = next_track.get("_prefetch")
+    if prefetch and prefetch.get("url") and (time.monotonic() - prefetch.get("at", 0)) < PREFETCH_MAX_AGE_SECONDS:
+        fresh = prefetch
+    else:
+        try:
+            fresh = await _extract(next_track["query"])
+        except Exception:
+            return  # best-effort — the natural end-of-track flow still covers this song normally
+
+    # something else (a skip, a stop, an effect toggle) may have taken over
+    # while we were awaiting extraction above — if the currently-live
+    # source isn't the one we started this crossfade from, bail rather
+    # than stomp on whatever's playing now.
+    if voice_client.source is not state.source or not state.queue or state.queue[0] is not next_track:
+        return
+
+    next_track["url"] = fresh["url"]
+    next_track["http_headers"] = fresh.get("http_headers") or {}
+
+    before_options = FFMPEG_OPTIONS["before_options"]
+    headers = next_track.get("http_headers") or {}
+    if headers:
+        header_str = "".join(f"{k}: {v}\r\n" for k, v in headers.items())
+        before_options += f' -headers "{header_str}"'
+    options = FFMPEG_OPTIONS["options"]
+    effect_filter = _EFFECT_FILTERS.get(state.effect_mode)
+    if effect_filter:
+        options += f' -af "{effect_filter}"'
+
+    incoming = discord.PCMVolumeTransformer(
+        discord.FFmpegPCMAudio(next_track["url"], before_options=before_options, options=options),
+        volume=state.volume,
+    )
+
+    fade_frames = max(1, round(state.crossfade_seconds * 50))  # 50 frames/sec — 20ms each
+    mix = _CrossfadeSource(state.source, incoming, fade_frames)
+    voice_client.source = mix
+    state.source = mix
+
+    state.queue.pop(0)
+    next_track.pop("_prefetch", None)
+    state.current = next_track
+    _reset_position(state)
+
+    await _refresh_menu(guild, state)
+    _schedule_crossfade(guild, voice_client, state, next_track)
+    if state.queue:
+        asyncio.create_task(_prefetch_next(guild.id))
 
 
 def _start_source(guild: discord.Guild, voice_client: discord.VoiceClient, state: "GuildMusicState",
@@ -495,6 +725,7 @@ def _start_source(guild: discord.Guild, voice_client: discord.VoiceClient, state
         if state.pending_restart:
             restart = state.pending_restart
             state.pending_restart = None
+            _cancel_crossfade_task(state)
             fut = asyncio.run_coroutine_threadsafe(
                 _resume_after_restart(guild, voice_client, state, restart["track"], restart["elapsed"]),
                 voice_client.loop,
@@ -507,6 +738,7 @@ def _start_source(guild: discord.Guild, voice_client: discord.VoiceClient, state
             pass
 
     voice_client.play(source, after=_after)
+    _schedule_crossfade(guild, voice_client, state, track)
     if state.queue:
         asyncio.create_task(_prefetch_next(guild.id))
 
@@ -516,7 +748,11 @@ async def _prefetch_next(guild_id: int):
     the gap between songs is just whatever's left of _extract's latency
     instead of the full lookup — kicked off right as the current track
     starts, giving it the whole rest of that track to finish quietly in
-    the background."""
+    the background. Waits PREFETCH_DELAY_SECONDS first and runs the actual
+    extraction at a lower thread priority so it doesn't compete with the
+    audio player thread for CPU right when it matters most (see the
+    constants above) — a prefetch that starts a few seconds late is still
+    miles ahead of not prefetching at all."""
     state = _states.get(guild_id)
     if not state or not state.queue:
         return
@@ -524,8 +760,20 @@ async def _prefetch_next(guild_id: int):
     if upcoming.get("_prefetch") is not None:
         return
     upcoming["_prefetch"] = {"status": "pending"}
+
     try:
-        fresh = await _extract(upcoming["query"])
+        await asyncio.sleep(PREFETCH_DELAY_SECONDS)
+    except asyncio.CancelledError:
+        upcoming["_prefetch"] = None
+        return
+    # the track that was upcoming when we started sleeping might not be
+    # anymore (skip/reorder while we waited) — bail rather than prefetch
+    # the wrong thing.
+    if not state.queue or state.queue[0] is not upcoming:
+        return
+
+    try:
+        fresh = await _extract(upcoming["query"], background=True)
         upcoming["_prefetch"] = {
             "url": fresh["url"],
             "http_headers": fresh.get("http_headers") or {},
@@ -537,6 +785,7 @@ async def _prefetch_next(guild_id: int):
 
 async def _play_next(guild: discord.Guild, voice_client: discord.VoiceClient):
     state = _state(guild.id)
+    _cancel_crossfade_task(state)  # whatever was scheduled for the track that just ended is stale now
 
     if state.loop_mode == "track" and state.current:
         state.current.pop("_prefetch", None)
@@ -589,6 +838,7 @@ async def _resume_after_restart(guild: discord.Guild, voice_client: discord.Voic
     """Continuation after an internal (non-advancing) stop — e.g. an effect
     toggle — restarts the same track from where it left off, once the old
     player has actually finished tearing down."""
+    _cancel_crossfade_task(state)
     try:
         fresh = await _extract(track["query"])
     except Exception:
@@ -653,6 +903,7 @@ async def _cmd_leave(ctx):
     if ctx.guild and ctx.guild.voice_client:
         if state:
             state.pending_restart = None
+            _cancel_crossfade_task(state)
         await ctx.guild.voice_client.disconnect(force=True)
         voice_owner.release(ctx.guild.id)
         if state:
@@ -747,6 +998,7 @@ async def _cmd_skip(ctx):
     if vc and (vc.is_playing() or vc.is_paused()):
         if state:
             state.pending_restart = None
+            _cancel_crossfade_task(state)
         vc.stop()  # triggers _after -> _play_next
         await ctx.send("Skipped.")
     else:
@@ -758,6 +1010,7 @@ async def _cmd_stop(ctx):
     state = _state(ctx.guild.id) if ctx.guild else None
     if vc and state:
         state.pending_restart = None
+        _cancel_crossfade_task(state)
         state.queue.clear()
         state.loop_mode = "off"
         state.current = None
@@ -817,6 +1070,9 @@ def get_state_dict(client: discord.Client, guild_id: str) -> dict:
         "loop_mode": state.loop_mode,
         "effect_mode": state.effect_mode,
         "effect_modes": [{"id": m, "label": EFFECT_LABELS[m]} for m in EFFECT_MODES],
+        "crossfade_seconds": state.crossfade_seconds,
+        "crossfade_min": CROSSFADE_MIN_SECONDS,
+        "crossfade_max": CROSSFADE_MAX_SECONDS,
         "queue": [t["title"] for t in state.queue[:10]],
         "queue_length": len(state.queue),
     }
@@ -869,6 +1125,7 @@ def web_skip(client: discord.Client, guild_id: str) -> dict:
         return {"ok": False, "error": "Nothing is playing."}
     state = _state(int(guild_id))
     state.pending_restart = None
+    _cancel_crossfade_task(state)
     vc.stop()
     return {"ok": True}
 
@@ -880,6 +1137,7 @@ def web_stop(client: discord.Client, guild_id: str) -> dict:
     if not vc:
         return {"ok": False, "error": "I'm not in a voice channel."}
     state.pending_restart = None
+    _cancel_crossfade_task(state)
     state.queue.clear()
     state.loop_mode = "off"
     state.current = None
@@ -921,5 +1179,116 @@ def web_set_effect(client: discord.Client, guild_id: str, mode: str) -> dict:
         return {"ok": True, "effect_mode": mode}
 
     state.pending_restart = {"track": state.current, "elapsed": _elapsed(state)}
+    _cancel_crossfade_task(state)  # _resume_after_restart -> _start_source reschedules it fresh
     vc.stop()
     return {"ok": True, "effect_mode": mode}
+
+
+def web_set_crossfade(client: discord.Client, guild_id: str, seconds) -> dict:
+    """Sets how many seconds of overlap to blend between a track ending
+    and the next one starting. 0 disables it. Reschedules immediately
+    against whatever's currently playing so a mid-song slider change takes
+    effect for the very next transition, not just future ones."""
+    try:
+        seconds = float(seconds)
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "Bad crossfade value."}
+    seconds = max(CROSSFADE_MIN_SECONDS, min(CROSSFADE_MAX_SECONDS, seconds))
+    state = _state(int(guild_id))
+    state.crossfade_seconds = seconds
+
+    guild = client.get_guild(int(guild_id)) if client else None
+    vc = guild.voice_client if guild else None
+    if vc and state.current:
+        _schedule_crossfade(guild, vc, state, state.current)
+    return {"ok": True, "crossfade_seconds": state.crossfade_seconds}
+
+
+def web_remove_from_queue(client: discord.Client, guild_id: str, index) -> dict:
+    """Removes a single queued (not yet playing) track by its 1-indexed
+    position, e.g. from the Music tab's queue list."""
+    state = _state(int(guild_id))
+    try:
+        idx = int(index) - 1
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "Bad queue position."}
+    if not (0 <= idx < len(state.queue)):
+        return {"ok": False, "error": "No song at that queue position."}
+    removed = state.queue.pop(idx)
+    _nudge_menu(client, int(guild_id))
+    return {"ok": True, "removed": removed["title"]}
+
+
+def _run_coro_threadsafe(client: discord.Client, coro, timeout: float = 20):
+    """Bridges a coroutine from the Flask (non-loop) thread onto the bot's
+    own event loop and blocks for the result — mirrors bot_manager.py's
+    _run_coro. Every other web_*() function in this module only ever
+    touches plain state or calls thread-safe discord.py methods (vc.pause()
+    and friends), so this is needed only by web_play, which is the one
+    that has to await real async work: connecting to voice and resolving
+    the track."""
+    if not (client and client.loop):
+        coro.close()  # avoid "coroutine was never awaited" — built but unused
+        return None
+    future = asyncio.run_coroutine_threadsafe(coro, client.loop)
+    try:
+        return future.result(timeout=timeout)
+    except Exception:
+        return None
+
+
+def web_play(client: discord.Client, guild_id: str, query: str) -> dict:
+    """Queues (or immediately plays, if nothing's currently playing) a
+    song from the web UI — the same resolve-then-queue-or-play logic as
+    !play, just without a ctx to reply through (errors come back in the
+    JSON response instead) or a text channel to post the interactive
+    now-playing menu in — the Music tab's own polling covers that job."""
+    reason = _unavailable_reason()
+    if reason:
+        return {"ok": False, "error": reason}
+    guild = client.get_guild(int(guild_id)) if client else None
+    if not guild:
+        return {"ok": False, "error": "Server not found — is the bot still in it?"}
+    query = (query or "").strip()
+    if not query:
+        return {"ok": False, "error": "Type a song name or paste a link first."}
+    if voice_owner.get(guild.id) == "tts":
+        return {"ok": False, "error": "TTS is on right now — turn it off first if you want music."}
+
+    async def _do():
+        vc = guild.voice_client
+        if not vc:
+            channel_id = guild_settings.get_music_channel(guild.id)
+            channel = guild.get_channel(channel_id) if channel_id else None
+            if not channel or not isinstance(channel, (discord.VoiceChannel, discord.StageChannel)):
+                return {"ok": False, "error": "No music voice channel set yet — pick one on the Mod tab."}
+            try:
+                vc_local = await channel.connect()
+            except discord.ClientException:
+                return {"ok": False, "error": "Already connected to a voice channel here."}
+            voice_owner.claim(guild.id, "music")
+        else:
+            vc_local = vc
+
+        state = _state(guild.id)
+        try:
+            resolved_query = await _maybe_resolve_spotify(query)
+            track = await _extract(resolved_query)
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": f"Couldn't find that: {exc}"}
+        track["requester"] = "Control Deck (web)"
+        track["query"] = resolved_query
+        state.queue.append(track)
+
+        already_playing = vc_local.is_playing() or vc_local.is_paused()
+        if not already_playing:
+            await _play_next(guild, vc_local)
+        return {
+            "ok": True,
+            "title": track["title"],
+            "queued": already_playing,
+            "queue_position": len(state.queue) if already_playing else None,
+        }
+
+    result = _run_coro_threadsafe(client, _do())
+    return result or {"ok": False, "error": "Bot isn't connected."}

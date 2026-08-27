@@ -291,6 +291,51 @@ def music_effect():
     return jsonify(result), (200 if result.get("ok") else 400)
 
 
+@app.route("/api/music/crossfade", methods=["POST"])
+def music_crossfade():
+    data = request.get_json(force=True, silent=True) or {}
+    guild_id = data.get("guild_id", "")
+    seconds = data.get("seconds", 0)
+
+    if bot_manager.status != "online":
+        return jsonify({"ok": False, "error": "Bot isn't connected yet."}), 400
+    if not guild_id:
+        return jsonify({"ok": False, "error": "Pick a server first."}), 400
+
+    result = bot_music.web_set_crossfade(bot_manager.client, guild_id, seconds)
+    return jsonify(result), (200 if result.get("ok") else 400)
+
+
+@app.route("/api/music/play", methods=["POST"])
+def music_play():
+    data = request.get_json(force=True, silent=True) or {}
+    guild_id = data.get("guild_id", "")
+    query = data.get("query", "")
+
+    if bot_manager.status != "online":
+        return jsonify({"ok": False, "error": "Bot isn't connected yet."}), 400
+    if not guild_id:
+        return jsonify({"ok": False, "error": "Pick a server first."}), 400
+
+    result = bot_music.web_play(bot_manager.client, guild_id, query)
+    return jsonify(result), (200 if result.get("ok") else 400)
+
+
+@app.route("/api/music/queue/remove", methods=["POST"])
+def music_queue_remove():
+    data = request.get_json(force=True, silent=True) or {}
+    guild_id = data.get("guild_id", "")
+    index = data.get("index")
+
+    if bot_manager.status != "online":
+        return jsonify({"ok": False, "error": "Bot isn't connected yet."}), 400
+    if not guild_id or index is None:
+        return jsonify({"ok": False, "error": "Pick a server and a queue position."}), 400
+
+    result = bot_music.web_remove_from_queue(bot_manager.client, guild_id, index)
+    return jsonify(result), (200 if result.get("ok") else 400)
+
+
 # ---------------- server backup / restore (web UI only) ----------------
 
 @app.route("/api/backups")

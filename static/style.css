@@ -987,12 +987,18 @@ input[type="file"].field-input::file-selector-button {
 
 .music-queue-item {
   display: flex;
+  align-items: center;
   gap: 8px;
   padding: 7px 10px;
   border: 1px solid var(--line);
   border-radius: 6px;
   background: var(--surface-2);
   font-size: 12.5px;
+}
+
+.music-queue-text {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1002,6 +1008,35 @@ input[type="file"].field-input::file-selector-button {
   color: var(--muted);
   font-family: 'JetBrains Mono', monospace;
   flex-shrink: 0;
+}
+
+.music-queue-remove {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  transition: border-color 0.15s, color 0.15s;
+}
+
+.music-queue-remove:hover {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+/* ---- range slider (crossfade) ---- */
+
+.field-range {
+  width: 100%;
+  margin: 10px 0 2px;
+  accent-color: var(--accent);
+  cursor: pointer;
 }
 
 /* ---- messages ---- */
