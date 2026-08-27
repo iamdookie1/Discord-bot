@@ -1,3 +1,24 @@
+// ---------- mobile nav (hamburger + off-canvas drawer) ----------
+
+const railEl = document.getElementById("rail");
+const railBackdrop = document.getElementById("railBackdrop");
+const navToggleBtn = document.getElementById("navToggleBtn");
+
+function openMobileNav() {
+  railEl.classList.add("is-open");
+  railBackdrop.classList.add("is-open");
+}
+
+function closeMobileNav() {
+  railEl.classList.remove("is-open");
+  railBackdrop.classList.remove("is-open");
+}
+
+navToggleBtn.addEventListener("click", () => {
+  railEl.classList.contains("is-open") ? closeMobileNav() : openMobileNav();
+});
+railBackdrop.addEventListener("click", closeMobileNav);
+
 // ---------- tab switching ----------
 
 const tabs = document.querySelectorAll(".rail-tab");
@@ -33,6 +54,10 @@ tabs.forEach((tab) => {
       loadBackupList();
     }
     if (tab.dataset.tab === "mod") refreshModServers();
+    if (tab.dataset.tab === "channels") refreshChanServers();
+    if (tab.dataset.tab === "categories") refreshCatServers();
+    if (tab.dataset.tab === "fonts" && !fontsInitialized) initFontsTab();
+    closeMobileNav();
   });
 });
 
@@ -1291,11 +1316,28 @@ const musicChannelMsg = document.getElementById("musicChannelMsg");
 const modLogChannelSelect = document.getElementById("modLogChannelSelect");
 const saveModLogChannelBtn = document.getElementById("saveModLogChannelBtn");
 const modLogChannelMsg = document.getElementById("modLogChannelMsg");
+const modMuteRoleSelect = document.getElementById("modMuteRoleSelect");
+const saveMuteRoleBtn = document.getElementById("saveMuteRoleBtn");
+const muteRoleMsg = document.getElementById("muteRoleMsg");
 const modUserIdInput = document.getElementById("modUserIdInput");
 const modReasonInput = document.getElementById("modReasonInput");
 const modMinutesInput = document.getElementById("modMinutesInput");
+const modWarnIndexInput = document.getElementById("modWarnIndexInput");
+const modNickInput = document.getElementById("modNickInput");
+const modRoleSelect = document.getElementById("modRoleSelect");
 const modActionMsg = document.getElementById("modActionMsg");
 const modWarningsList = document.getElementById("modWarningsList");
+const modChannelSelect = document.getElementById("modChannelSelect");
+const modPurgeCountInput = document.getElementById("modPurgeCountInput");
+const modSlowmodeInput = document.getElementById("modSlowmodeInput");
+const modAnnounceInput = document.getElementById("modAnnounceInput");
+const modMessageIdInput = document.getElementById("modMessageIdInput");
+const modPurgeUserIdInput = document.getElementById("modPurgeUserIdInput");
+const modChannelMsg = document.getElementById("modChannelMsg");
+const modNewRoleInput = document.getElementById("modNewRoleInput");
+const modRoleCreateMsg = document.getElementById("modRoleCreateMsg");
+const modRoleList = document.getElementById("modRoleList");
+const modBanList = document.getElementById("modBanList");
 
 async function refreshModServers() {
   const guilds = await api("/api/guilds");
@@ -1309,7 +1351,9 @@ async function refreshModServers() {
     guilds.map((g) => `<option value="${g.id}">${escapeHtml(g.name)}</option>`).join("");
   if (current) modServerSelect.value = current;
   await refreshModChannels();
+  await refreshModRoles();
   await loadGuildSettings();
+  await refreshModBanList();
 }
 
 async function refreshModChannels() {
@@ -1317,6 +1361,7 @@ async function refreshModChannels() {
   if (!guildId) {
     modMusicChannelSelect.innerHTML = '<option value="">Pick a server first&hellip;</option>';
     modLogChannelSelect.innerHTML = '<option value="">Pick a server first&hellip;</option>';
+    modChannelSelect.innerHTML = '<option value="">Pick a server first&hellip;</option>';
     return;
   }
   const [voiceChannels, textChannels] = await Promise.all([
@@ -1327,7 +1372,117 @@ async function refreshModChannels() {
     voiceChannels.map((c) => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join("");
   modLogChannelSelect.innerHTML = '<option value="">None</option>' +
     textChannels.map((c) => `<option value="${c.id}">#${escapeHtml(c.name)}</option>`).join("");
+  modChannelSelect.innerHTML = '<option value="">Choose a channel&hellip;</option>' +
+    textChannels.map((c) => `<option value="${c.id}">#${escapeHtml(c.name)}</option>`).join("");
 }
+
+async function refreshModRoles() {
+  const guildId = modServerSelect.value;
+  if (!guildId) {
+    modMuteRoleSelect.innerHTML = '<option value="">Pick a server first&hellip;</option>';
+    modRoleSelect.innerHTML = '<option value="">Pick a server first&hellip;</option>';
+    modRoleList.innerHTML = "";
+    return;
+  }
+  const roles = await api(`/api/roles?guild_id=${encodeURIComponent(guildId)}`);
+  modMuteRoleSelect.innerHTML = '<option value="">None</option>' +
+    roles.map((r) => `<option value="${r.id}">${escapeHtml(r.name)}</option>`).join("");
+  modRoleSelect.innerHTML = '<option value="">Choose a role&hellip;</option>' +
+    roles.map((r) => `<option value="${r.id}">${escapeHtml(r.name)}</option>`).join("");
+
+  modRoleList.innerHTML = roles.length
+    ? roles.map((r) => `
+        <div class="mod-list-item" data-role-id="${r.id}">
+          <div class="mod-list-info"><span class="mod-list-name">${escapeHtml(r.name)}</span></div>
+          <div class="mod-list-actions">
+            <button class="btn-outline btn-small mod-role-delete-btn">Delete</button>
+          </div>
+        </div>`).join("")
+    : '<p class="mod-list-empty">No roles found (or the bot has no manageable roles below it).</p>';
+
+  modRoleList.querySelectorAll(".mod-role-delete-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const row = btn.closest(".mod-list-item");
+      const roleId = row.dataset.roleId;
+      const roleName = row.querySelector(".mod-list-name").textContent;
+      if (!confirm(`Delete role "${roleName}"? This can't be undone.`)) return;
+      const data = await api("/api/roles", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ guild_id: guildId, role_id: roleId }),
+      });
+      if (data.ok) {
+        await refreshModRoles();
+      } else {
+        alert(data.error || "Couldn't delete that role.");
+      }
+    });
+  });
+}
+
+document.getElementById("modCreateRoleBtn").addEventListener("click", async () => {
+  const guildId = modServerSelect.value;
+  const name = modNewRoleInput.value.trim();
+  if (!guildId || !name) {
+    setMsg(modRoleCreateMsg, "Pick a server and enter a role name first.", "error");
+    return;
+  }
+  const data = await api("/api/roles", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ guild_id: guildId, name }),
+  });
+  setMsg(modRoleCreateMsg, data.ok ? "Created." : (data.error || "Couldn't create that role."), data.ok ? "success" : "error");
+  if (data.ok) {
+    modNewRoleInput.value = "";
+    await refreshModRoles();
+  }
+});
+
+async function refreshModBanList() {
+  const guildId = modServerSelect.value;
+  if (!guildId) {
+    modBanList.innerHTML = "";
+    return;
+  }
+  const data = await api(`/api/moderation/banlist?guild_id=${encodeURIComponent(guildId)}`);
+  if (!data.ok) {
+    modBanList.innerHTML = `<p class="mod-list-empty">${escapeHtml(data.error || "Couldn't load the ban list.")}</p>`;
+    return;
+  }
+  if (!data.bans.length) {
+    modBanList.innerHTML = '<p class="mod-list-empty">No bans in this server.</p>';
+    return;
+  }
+  modBanList.innerHTML = data.bans.map((b) => `
+    <div class="mod-list-item" data-user-id="${b.id}">
+      <div class="mod-list-info">
+        <span class="mod-list-name">${escapeHtml(b.name)}</span>
+        <span class="mod-list-sub">${b.id}</span>
+      </div>
+      <div class="mod-list-actions">
+        <button class="btn-outline btn-small mod-unban-btn">Unban</button>
+      </div>
+    </div>`).join("");
+
+  modBanList.querySelectorAll(".mod-unban-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const userId = btn.closest(".mod-list-item").dataset.userId;
+      const data2 = await api("/api/moderation/user_action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ guild_id: guildId, user_id: userId, action: "unban" }),
+      });
+      if (data2.ok) {
+        await refreshModBanList();
+      } else {
+        alert(data2.error || "Couldn't unban that user.");
+      }
+    });
+  });
+}
+
+document.getElementById("modRefreshBansBtn").addEventListener("click", refreshModBanList);
 
 async function loadGuildSettings() {
   const guildId = modServerSelect.value;
@@ -1335,11 +1490,14 @@ async function loadGuildSettings() {
   const s = await api(`/api/guild_settings?guild_id=${encodeURIComponent(guildId)}`);
   if (s.music_channel) modMusicChannelSelect.value = String(s.music_channel);
   if (s.modlog_channel) modLogChannelSelect.value = String(s.modlog_channel);
+  if (s.mute_role) modMuteRoleSelect.value = String(s.mute_role);
 }
 
 modServerSelect.addEventListener("change", async () => {
   await refreshModChannels();
+  await refreshModRoles();
   await loadGuildSettings();
+  await refreshModBanList();
 });
 
 saveMusicChannelBtn.addEventListener("click", async () => {
@@ -1370,6 +1528,20 @@ saveModLogChannelBtn.addEventListener("click", async () => {
   setMsg(modLogChannelMsg, data.ok ? "Saved." : (data.error || "Couldn't save."), data.ok ? "success" : "error");
 });
 
+saveMuteRoleBtn.addEventListener("click", async () => {
+  const guildId = modServerSelect.value;
+  if (!guildId) {
+    setMsg(muteRoleMsg, "Pick a server first.", "error");
+    return;
+  }
+  const data = await api("/api/guild_settings", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ guild_id: guildId, mute_role: modMuteRoleSelect.value || null }),
+  });
+  setMsg(muteRoleMsg, data.ok ? "Saved." : (data.error || "Couldn't save."), data.ok ? "success" : "error");
+});
+
 async function refreshModWarnings() {
   const guildId = modServerSelect.value;
   const userId = modUserIdInput.value.trim();
@@ -1387,7 +1559,9 @@ async function refreshModWarnings() {
 
 modUserIdInput.addEventListener("blur", refreshModWarnings);
 
-async function runModAction(action, { confirmText, needsMinutes } = {}) {
+// ---- member actions (act on modUserIdInput's user, via /api/moderation/action) ----
+
+async function runModAction(action, { confirmText, needsMinutes, extra } = {}) {
   const guildId = modServerSelect.value;
   const userId = modUserIdInput.value.trim();
   if (!guildId || !userId) {
@@ -1397,7 +1571,8 @@ async function runModAction(action, { confirmText, needsMinutes } = {}) {
   if (confirmText && !confirm(confirmText)) return;
 
   const body = { guild_id: guildId, user_id: userId, action, reason: modReasonInput.value.trim() };
-  if (needsMinutes) body.minutes = parseInt(modMinutesInput.value, 10) || 10;
+  if (needsMinutes) body.minutes = parseFloat(modMinutesInput.value) || 10;
+  if (extra !== undefined) body.extra = extra;
 
   setMsg(modActionMsg, "Working...", "");
   const data = await api("/api/moderation/action", {
@@ -1406,21 +1581,571 @@ async function runModAction(action, { confirmText, needsMinutes } = {}) {
     body: JSON.stringify(body),
   });
   setMsg(modActionMsg, data.ok ? "Done." : (data.error || "Couldn't do that."), data.ok ? "success" : "error");
-  if (data.ok && (action === "warn" || action === "clearwarnings")) refreshModWarnings();
+  if (data.ok && ["warn", "clearwarnings", "warnremove"].includes(action)) refreshModWarnings();
+}
+
+// ---- member actions that work on a raw user ID (no membership needed) ----
+
+async function runModUserAction(action, { confirmText } = {}) {
+  const guildId = modServerSelect.value;
+  const userId = modUserIdInput.value.trim();
+  if (!guildId || !userId) {
+    setMsg(modActionMsg, "Pick a server and enter a user ID first.", "error");
+    return;
+  }
+  if (confirmText && !confirm(confirmText)) return;
+
+  setMsg(modActionMsg, "Working...", "");
+  const data = await api("/api/moderation/user_action", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ guild_id: guildId, user_id: userId, action, reason: modReasonInput.value.trim() }),
+  });
+  setMsg(modActionMsg, data.ok ? "Done." : (data.error || "Couldn't do that."), data.ok ? "success" : "error");
+  if (data.ok) refreshModBanList();
 }
 
 document.getElementById("modKickBtn").addEventListener("click", () =>
   runModAction("kick", { confirmText: "Kick this member?" }));
 document.getElementById("modBanBtn").addEventListener("click", () =>
   runModAction("ban", { confirmText: "Ban this member? This can't be easily undone." }));
+document.getElementById("modSoftbanBtn").addEventListener("click", () =>
+  runModAction("softban", { confirmText: "Softban this member (ban+unban to purge recent messages)?" }));
+document.getElementById("modTempbanBtn").addEventListener("click", () =>
+  runModAction("tempban", { needsMinutes: true, confirmText: "Temp-ban this member for the given number of minutes?" }));
+document.getElementById("modBanIdBtn").addEventListener("click", () =>
+  runModUserAction("banid", { confirmText: "Ban this user ID? They don't need to be a member." }));
+document.getElementById("modUnbanBtn").addEventListener("click", () =>
+  runModUserAction("unban"));
 document.getElementById("modTimeoutBtn").addEventListener("click", () =>
   runModAction("timeout", { needsMinutes: true }));
+document.getElementById("modUntimeoutBtn").addEventListener("click", () =>
+  runModAction("untimeout"));
+document.getElementById("modMuteBtn").addEventListener("click", () =>
+  runModAction("mute"));
+document.getElementById("modUnmuteBtn").addEventListener("click", () =>
+  runModAction("unmute"));
 document.getElementById("modWarnBtn").addEventListener("click", () =>
   runModAction("warn"));
+document.getElementById("modWarnRemoveBtn").addEventListener("click", () =>
+  runModAction("warnremove", { extra: modWarnIndexInput.value.trim() }));
 document.getElementById("modClearWarningsBtn").addEventListener("click", () =>
   runModAction("clearwarnings", { confirmText: "Clear all warnings for this member?" }));
+document.getElementById("modNickBtn").addEventListener("click", () =>
+  runModAction("nick", { extra: modNickInput.value.trim() }));
 document.getElementById("modClearNickBtn").addEventListener("click", () =>
   runModAction("clearnick"));
+document.getElementById("modAddRoleBtn").addEventListener("click", () =>
+  runModAction("addrole", { extra: modRoleSelect.value }));
+document.getElementById("modRemoveRoleBtn").addEventListener("click", () =>
+  runModAction("removerole", { extra: modRoleSelect.value }));
+
+// ---- channel moderation ----
+
+async function runModChannelAction(action, extra) {
+  const guildId = modServerSelect.value;
+  const channelId = modChannelSelect.value;
+  if (!guildId || !channelId) {
+    setMsg(modChannelMsg, "Pick a server and a channel first.", "error");
+    return;
+  }
+  setMsg(modChannelMsg, "Working...", "");
+  const data = await api("/api/moderation/channel_action", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ guild_id: guildId, channel_id: channelId, action, extra }),
+  });
+  setMsg(
+    modChannelMsg,
+    data.ok ? ("deleted" in data ? `Deleted ${data.deleted} message(s).` : "Done.") : (data.error || "Couldn't do that."),
+    data.ok ? "success" : "error"
+  );
+}
+
+document.getElementById("modPurgeBtn").addEventListener("click", () =>
+  runModChannelAction("purge", modPurgeCountInput.value.trim()));
+document.getElementById("modSlowmodeBtn").addEventListener("click", () =>
+  runModChannelAction("slowmode", modSlowmodeInput.value.trim()));
+document.getElementById("modLockBtn").addEventListener("click", () => runModChannelAction("lock"));
+document.getElementById("modUnlockBtn").addEventListener("click", () => runModChannelAction("unlock"));
+document.getElementById("modAnnounceBtn").addEventListener("click", () =>
+  runModChannelAction("announce", modAnnounceInput.value));
+
+document.getElementById("modPinBtn").addEventListener("click", async () => {
+  const guildId = modServerSelect.value;
+  const channelId = modChannelSelect.value;
+  const messageId = modMessageIdInput.value.trim();
+  if (!guildId || !channelId || !messageId) {
+    setMsg(modChannelMsg, "Pick a server, a channel, and a message ID first.", "error");
+    return;
+  }
+  const data = await api("/api/moderation/pin", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ guild_id: guildId, channel_id: channelId, message_id: messageId, pin: true }),
+  });
+  setMsg(modChannelMsg, data.ok ? "Pinned." : (data.error || "Couldn't pin that."), data.ok ? "success" : "error");
+});
+
+document.getElementById("modUnpinBtn").addEventListener("click", async () => {
+  const guildId = modServerSelect.value;
+  const channelId = modChannelSelect.value;
+  const messageId = modMessageIdInput.value.trim();
+  if (!guildId || !channelId || !messageId) {
+    setMsg(modChannelMsg, "Pick a server, a channel, and a message ID first.", "error");
+    return;
+  }
+  const data = await api("/api/moderation/pin", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ guild_id: guildId, channel_id: channelId, message_id: messageId, pin: false }),
+  });
+  setMsg(modChannelMsg, data.ok ? "Unpinned." : (data.error || "Couldn't unpin that."), data.ok ? "success" : "error");
+});
+
+document.getElementById("modPurgeUserBtn").addEventListener("click", async () => {
+  const guildId = modServerSelect.value;
+  const channelId = modChannelSelect.value;
+  const userId = modPurgeUserIdInput.value.trim();
+  if (!guildId || !channelId || !userId) {
+    setMsg(modChannelMsg, "Pick a server, a channel, and a user ID first.", "error");
+    return;
+  }
+  const data = await api("/api/moderation/purge_user", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ guild_id: guildId, channel_id: channelId, user_id: userId, count: parseInt(modPurgeCountInput.value, 10) || 10 }),
+  });
+  setMsg(modChannelMsg, data.ok ? `Deleted ${data.deleted} message(s).` : (data.error || "Couldn't do that."), data.ok ? "success" : "error");
+});
+
+// ---------- channels tab ----------
+
+const chanServerSelect = document.getElementById("chanServerSelect");
+const chanNameInput = document.getElementById("chanNameInput");
+const chanTypeSelect = document.getElementById("chanTypeSelect");
+const chanCategorySelect = document.getElementById("chanCategorySelect");
+const chanCreateMsg = document.getElementById("chanCreateMsg");
+const chanList = document.getElementById("chanList");
+
+async function refreshChanServers() {
+  const guilds = await api("/api/guilds");
+  const current = chanServerSelect.value;
+  if (!guilds.length) {
+    chanServerSelect.innerHTML = '<option value="">No servers found (is the bot online + invited?)</option>';
+    return;
+  }
+  chanServerSelect.innerHTML =
+    '<option value="">Choose a server&hellip;</option>' +
+    guilds.map((g) => `<option value="${g.id}">${escapeHtml(g.name)}</option>`).join("");
+  if (current) chanServerSelect.value = current;
+  await refreshChanData();
+}
+
+async function refreshChanData() {
+  const guildId = chanServerSelect.value;
+  if (!guildId) {
+    chanCategorySelect.innerHTML = '<option value="">None</option>';
+    chanList.innerHTML = "";
+    return;
+  }
+  const data = await api(`/api/channels_full?guild_id=${encodeURIComponent(guildId)}`);
+  const categoryOptions = data.categories.map((c) => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join("");
+  chanCategorySelect.innerHTML = '<option value="">None</option>' + categoryOptions;
+
+  if (!data.channels.length) {
+    chanList.innerHTML = '<p class="mod-list-empty">No channels found.</p>';
+    return;
+  }
+
+  const categoryName = (id) => (data.categories.find((c) => c.id === id) || {}).name;
+
+  chanList.innerHTML = data.channels.map((c) => `
+    <div class="mod-list-item" data-channel-id="${c.id}">
+      <div class="mod-list-info">
+        <span class="mod-list-name">${c.type === "voice" ? "🔊" : "#"} ${escapeHtml(c.name)}</span>
+        <span class="mod-list-sub">${c.category_id ? escapeHtml(categoryName(c.category_id) || "") : "No category"}</span>
+      </div>
+      <div class="mod-list-actions">
+        <input type="text" class="field-input chan-rename-input" placeholder="Rename&hellip;">
+        <button class="btn-outline btn-small chan-rename-btn">Rename</button>
+        <select class="field-input chan-move-select">
+          <option value="">No category</option>
+          ${categoryOptions}
+        </select>
+        <button class="btn-outline btn-small chan-move-btn">Move</button>
+        <button class="btn-outline btn-small chan-delete-btn">Delete</button>
+      </div>
+    </div>`).join("");
+
+  chanList.querySelectorAll(".mod-list-item").forEach((row) => {
+    const channelId = row.dataset.channelId;
+    const moveSelect = row.querySelector(".chan-move-select");
+    const currentCategory = data.channels.find((c) => c.id === channelId).category_id;
+    if (currentCategory) moveSelect.value = currentCategory;
+
+    row.querySelector(".chan-rename-btn").addEventListener("click", async () => {
+      const name = row.querySelector(".chan-rename-input").value.trim();
+      if (!name) return;
+      const res = await api("/api/channels/rename", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ guild_id: guildId, channel_id: channelId, name }),
+      });
+      if (res.ok) refreshChanData();
+      else alert(res.error || "Couldn't rename that channel.");
+    });
+
+    row.querySelector(".chan-move-btn").addEventListener("click", async () => {
+      const res = await api("/api/channels/move", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ guild_id: guildId, channel_id: channelId, category_id: moveSelect.value }),
+      });
+      if (res.ok) refreshChanData();
+      else alert(res.error || "Couldn't move that channel.");
+    });
+
+    row.querySelector(".chan-delete-btn").addEventListener("click", async () => {
+      const name = row.querySelector(".mod-list-name").textContent;
+      if (!confirm(`Delete channel "${name.trim()}"? This can't be undone.`)) return;
+      const res = await api("/api/channels/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ guild_id: guildId, channel_id: channelId }),
+      });
+      if (res.ok) refreshChanData();
+      else alert(res.error || "Couldn't delete that channel.");
+    });
+  });
+}
+
+chanServerSelect.addEventListener("change", refreshChanData);
+
+document.getElementById("chanCreateBtn").addEventListener("click", async () => {
+  const guildId = chanServerSelect.value;
+  const name = chanNameInput.value.trim();
+  if (!guildId || !name) {
+    setMsg(chanCreateMsg, "Pick a server and enter a name first.", "error");
+    return;
+  }
+  const data = await api("/api/channels", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ guild_id: guildId, name, type: chanTypeSelect.value, category_id: chanCategorySelect.value }),
+  });
+  setMsg(chanCreateMsg, data.ok ? "Created." : (data.error || "Couldn't create that channel."), data.ok ? "success" : "error");
+  if (data.ok) {
+    chanNameInput.value = "";
+    refreshChanData();
+  }
+});
+
+// ---------- categories tab ----------
+
+const catServerSelect = document.getElementById("catServerSelect");
+const catNameInput = document.getElementById("catNameInput");
+const catCreateMsg = document.getElementById("catCreateMsg");
+const catList = document.getElementById("catList");
+
+async function refreshCatServers() {
+  const guilds = await api("/api/guilds");
+  const current = catServerSelect.value;
+  if (!guilds.length) {
+    catServerSelect.innerHTML = '<option value="">No servers found (is the bot online + invited?)</option>';
+    return;
+  }
+  catServerSelect.innerHTML =
+    '<option value="">Choose a server&hellip;</option>' +
+    guilds.map((g) => `<option value="${g.id}">${escapeHtml(g.name)}</option>`).join("");
+  if (current) catServerSelect.value = current;
+  await refreshCatData();
+}
+
+async function refreshCatData() {
+  const guildId = catServerSelect.value;
+  if (!guildId) {
+    catList.innerHTML = "";
+    return;
+  }
+  const data = await api(`/api/channels_full?guild_id=${encodeURIComponent(guildId)}`);
+  if (!data.categories.length) {
+    catList.innerHTML = '<p class="mod-list-empty">No categories yet.</p>';
+    return;
+  }
+  catList.innerHTML = data.categories.map((c) => `
+    <div class="mod-list-item" data-category-id="${c.id}">
+      <div class="mod-list-info"><span class="mod-list-name">${escapeHtml(c.name)}</span></div>
+      <div class="mod-list-actions">
+        <input type="text" class="field-input cat-rename-input" placeholder="Rename&hellip;">
+        <button class="btn-outline btn-small cat-rename-btn">Rename</button>
+        <button class="btn-outline btn-small cat-delete-btn">Delete</button>
+      </div>
+    </div>`).join("");
+
+  catList.querySelectorAll(".mod-list-item").forEach((row) => {
+    const categoryId = row.dataset.categoryId;
+    row.querySelector(".cat-rename-btn").addEventListener("click", async () => {
+      const name = row.querySelector(".cat-rename-input").value.trim();
+      if (!name) return;
+      const res = await api("/api/channels/rename", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ guild_id: guildId, channel_id: categoryId, name }),
+      });
+      if (res.ok) refreshCatData();
+      else alert(res.error || "Couldn't rename that category.");
+    });
+    row.querySelector(".cat-delete-btn").addEventListener("click", async () => {
+      const name = row.querySelector(".mod-list-name").textContent;
+      if (!confirm(`Delete category "${name}"? Channels inside it just become uncategorized.`)) return;
+      const res = await api("/api/channels/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ guild_id: guildId, channel_id: categoryId }),
+      });
+      if (res.ok) refreshCatData();
+      else alert(res.error || "Couldn't delete that category.");
+    });
+  });
+}
+
+catServerSelect.addEventListener("change", refreshCatData);
+
+document.getElementById("catCreateBtn").addEventListener("click", async () => {
+  const guildId = catServerSelect.value;
+  const name = catNameInput.value.trim();
+  if (!guildId || !name) {
+    setMsg(catCreateMsg, "Pick a server and enter a name first.", "error");
+    return;
+  }
+  const data = await api("/api/channels", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ guild_id: guildId, name, type: "category" }),
+  });
+  setMsg(catCreateMsg, data.ok ? "Created." : (data.error || "Couldn't create that category."), data.ok ? "success" : "error");
+  if (data.ok) {
+    catNameInput.value = "";
+    refreshCatData();
+  }
+});
+
+// ---------- fonts tab ----------
+
+let fontsInitialized = false;
+
+function mathAlphaConverter(upperOffset, lowerOffset, digitOffset, exceptions = {}) {
+  return (text) => Array.from(text).map((ch) => {
+    if (exceptions[ch]) return exceptions[ch];
+    const code = ch.codePointAt(0);
+    if (ch >= "A" && ch <= "Z") return String.fromCodePoint(code + upperOffset);
+    if (ch >= "a" && ch <= "z") return String.fromCodePoint(code + lowerOffset);
+    if (digitOffset !== null && ch >= "0" && ch <= "9") return String.fromCodePoint(code + digitOffset);
+    return ch;
+  }).join("");
+}
+
+function lookupConverter(table) {
+  return (text) => Array.from(text).map((ch) => table[ch] || ch).join("");
+}
+
+function combiningConverter(mark) {
+  return (text) => Array.from(text).map((ch) => (ch === " " ? ch : ch + mark)).join("");
+}
+
+const SCRIPT_EXC = { B: "ℬ", E: "ℰ", F: "ℱ", H: "ℋ", I: "ℐ", L: "ℒ", M: "ℳ", R: "ℛ", e: "ℯ", g: "ℊ", o: "ℴ" };
+const FRAKTUR_EXC = { C: "ℭ", H: "ℌ", I: "ℑ", R: "ℜ", Z: "ℨ" };
+const DOUBLE_EXC = { C: "ℂ", H: "ℍ", N: "ℕ", P: "ℙ", Q: "ℚ", R: "ℝ", Z: "ℤ" };
+const ITALIC_EXC = { h: "ℎ" };
+
+const SMALL_CAPS_UPPER = {
+  A: "ᴀ", B: "ʙ", C: "ᴄ", D: "ᴅ", E: "ᴇ", F: "ꜰ", G: "ɢ", H: "ʜ", I: "ɪ", J: "ᴊ",
+  K: "ᴋ", L: "ʟ", M: "ᴍ", N: "ɴ", O: "ᴏ", P: "ᴘ", Q: "ꞯ", R: "ʀ", S: "ꜱ", T: "ᴛ",
+  U: "ᴜ", V: "ᴠ", W: "ᴡ", X: "x", Y: "ʏ", Z: "ᴢ",
+};
+const SMALL_CAPS = { ...SMALL_CAPS_UPPER };
+for (const [k, v] of Object.entries(SMALL_CAPS_UPPER)) SMALL_CAPS[k.toLowerCase()] = v;
+
+const CIRCLED = {};
+const SQUARED = {};
+const NEG_SQUARED = {};
+for (let i = 0; i < 26; i++) {
+  const upper = String.fromCharCode(65 + i);
+  const lower = String.fromCharCode(97 + i);
+  CIRCLED[upper] = String.fromCodePoint(0x24B6 + i);
+  CIRCLED[lower] = String.fromCodePoint(0x24D0 + i);
+  SQUARED[upper] = String.fromCodePoint(0x1F130 + i);
+  SQUARED[lower] = String.fromCodePoint(0x1F130 + i);
+  NEG_SQUARED[upper] = String.fromCodePoint(0x1F170 + i);
+  NEG_SQUARED[lower] = String.fromCodePoint(0x1F170 + i);
+}
+for (let i = 1; i <= 9; i++) CIRCLED[String(i)] = String.fromCodePoint(0x2460 + (i - 1));
+CIRCLED["0"] = String.fromCodePoint(0x24EA);
+
+const UPSIDE_DOWN = {
+  a: "ɐ", b: "q", c: "ɔ", d: "p", e: "ǝ", f: "ɟ", g: "ƃ", h: "ɥ", i: "ᴉ", j: "ɾ",
+  k: "ʞ", l: "l", m: "ɯ", n: "u", o: "o", p: "d", q: "b", r: "ɹ", s: "s", t: "ʇ",
+  u: "n", v: "ʌ", w: "ʍ", x: "x", y: "ʎ", z: "z",
+  A: "∀", B: "B", C: "Ɔ", D: "ᗡ", E: "Ǝ", F: "Ⅎ", G: "⅁", H: "H", I: "I", J: "ſ",
+  K: "ʞ", L: "˥", M: "W", N: "N", O: "O", P: "Ԁ", Q: "Ò", R: "ᴚ", S: "S", T: "⊥",
+  U: "∩", V: "Λ", W: "M", X: "X", Y: "ʎ", Z: "Z",
+  "0": "0", "1": "Ɩ", "2": "ᄅ", "3": "Ɛ", "4": "ㄣ", "5": "5", "6": "9", "7": "ㄥ", "8": "8", "9": "6",
+  ".": "˙", ",": "'", "'": ",", "?": "¿", "!": "¡", "(": ")", ")": "(", "[": "]", "]": "[", "_": "‾",
+};
+function upsideDownConvert(text) {
+  return Array.from(text).reverse().map((ch) => UPSIDE_DOWN[ch] || ch).join("");
+}
+
+function reversedConvert(text) {
+  return Array.from(text).reverse().join("");
+}
+
+function wideConvert(text) {
+  return Array.from(text).join(" ");
+}
+
+const ZALGO_UP = ["̍", "̎", "̄", "̅", "̿", "̑", "̆", "̐", "͒", "͗", "͑", "̇", "̈", "̊", "͂", "̓", "̈́", "͊", "͋", "͌", "̃", "̂", "̌", "͐", "̀", "́", "̋", "̏", "̒"];
+const ZALGO_DOWN = ["̖", "̗", "̘", "̙", "̜", "̝", "̞", "̟", "̠", "̤", "̥", "̦", "̩", "̪", "̫", "̬", "̭", "̮", "̯", "̰", "̱", "̲", "̳", "̹", "̺", "̻", "̼", "̣"];
+const ZALGO_MID = ["̕", "̛", "̀", "́", "͘", "̡", "̢", "̧", "̨", "̴", "̵", "̶", "͜", "͝", "͞", "͟", "͠", "͢"];
+
+function zalgoConvert(text) {
+  return Array.from(text).map((ch) => {
+    if (ch === " ") return ch;
+    let out = ch;
+    for (let i = 0; i < 3; i++) out += ZALGO_UP[Math.floor(Math.random() * ZALGO_UP.length)];
+    for (let i = 0; i < 3; i++) out += ZALGO_DOWN[Math.floor(Math.random() * ZALGO_DOWN.length)];
+    out += ZALGO_MID[Math.floor(Math.random() * ZALGO_MID.length)];
+    return out;
+  }).join("");
+}
+
+const FONT_STYLES = [
+  { id: "bold", label: "Bold", convert: mathAlphaConverter(119743, 119737, 120734) },
+  { id: "italic", label: "Italic", convert: mathAlphaConverter(119795, 119789, null, ITALIC_EXC) },
+  { id: "bold_italic", label: "Bold Italic", convert: mathAlphaConverter(119847, 119841, null) },
+  { id: "script", label: "Script", convert: mathAlphaConverter(119899, 119893, null, SCRIPT_EXC) },
+  { id: "bold_script", label: "Bold Script", convert: mathAlphaConverter(119951, 119945, null) },
+  { id: "fraktur", label: "Fraktur", convert: mathAlphaConverter(120003, 119997, null, FRAKTUR_EXC) },
+  { id: "bold_fraktur", label: "Bold Fraktur", convert: mathAlphaConverter(120107, 120101, null) },
+  { id: "double_struck", label: "Double-Struck", convert: mathAlphaConverter(120055, 120049, 120744, DOUBLE_EXC) },
+  { id: "sans", label: "Sans-Serif", convert: mathAlphaConverter(120159, 120153, 120754) },
+  { id: "sans_bold", label: "Sans-Serif Bold", convert: mathAlphaConverter(120211, 120205, 120764) },
+  { id: "sans_italic", label: "Sans-Serif Italic", convert: mathAlphaConverter(120263, 120257, null) },
+  { id: "sans_bold_italic", label: "Sans-Serif Bold Italic", convert: mathAlphaConverter(120315, 120309, null) },
+  { id: "monospace", label: "Monospace", convert: mathAlphaConverter(120367, 120361, 120774) },
+  { id: "fullwidth", label: "Vaporwave (Fullwidth)", convert: mathAlphaConverter(65248, 65248, 65248) },
+  { id: "smallcaps", label: "Small Caps", convert: lookupConverter(SMALL_CAPS) },
+  { id: "circled", label: "Circled", convert: lookupConverter(CIRCLED) },
+  { id: "squared", label: "Squared", convert: lookupConverter(SQUARED) },
+  { id: "neg_squared", label: "Squared (Filled)", convert: lookupConverter(NEG_SQUARED) },
+  { id: "strikethrough", label: "Strikethrough", convert: combiningConverter("̶") },
+  { id: "underline", label: "Underline", convert: combiningConverter("̲") },
+  { id: "upside_down", label: "Upside Down", convert: upsideDownConvert },
+  { id: "reversed", label: "Reversed", convert: reversedConvert },
+  { id: "wide", label: "Wide Spacing", convert: wideConvert },
+  { id: "zalgo", label: "Zalgo (Cursed)", convert: zalgoConvert },
+];
+
+const INVISIBLE_CHARS = [
+  { char: "​", display: "ZWSP", label: "Zero Width Space" },
+  { char: "‌", display: "ZWNJ", label: "Zero Width Non-Joiner" },
+  { char: "‍", display: "ZWJ", label: "Zero Width Joiner" },
+  { char: "⁠", display: "WJ", label: "Word Joiner" },
+  { char: "﻿", display: "BOM", label: "Zero Width No-Break Space" },
+  { char: "ㅤ", display: "ㅤ", label: "Hangul Filler (renders blank, keeps width)" },
+  { char: "⠀", display: "⠀", label: "Braille Pattern Blank" },
+  { char: " ", display: "NBSP", label: "No-Break Space" },
+  { char: " ", display: "EN", label: "En Space" },
+  { char: " ", display: "EM", label: "Em Space" },
+];
+
+const ARROW_CHARS = [
+  "→", "←", "↑", "↓", "↔", "↕", "↗", "↘", "↙", "↖",
+  "⇒", "⇐", "⇑", "⇓", "⇔", "⇕", "⇄", "⇅", "⇆", "⇇",
+  "⇈", "⇉", "⇊", "↩", "↪", "↺", "↻", "➜", "➔", "➤",
+  "⟶", "⟵", "⟷", "➡", "⬅", "⬆", "⬇", "➳", "➵", "➸",
+];
+
+const SYMBOL_CHARS = [
+  "★", "☆", "✦", "✧", "✩", "✪", "✫", "✬", "✭", "✮",
+  "✯", "✰", "⭐", "🌟", "♦", "♣", "♠", "♥", "❤", "✔",
+  "✓", "✗", "✘", "☑", "☒", "※", "‡", "†", "§", "¶",
+  "©", "®", "™", "°", "±", "≈", "≠", "≤", "≥", "∞",
+  "√", "∑", "∫", "π", "Ω", "µ", "∆", "♪", "♫", "☾",
+  "☽", "☼", "☀", "☁", "☂", "☃", "❄", "⚡", "⚠", "☠",
+  "☮", "☯", "✈", "⌘", "⚔", "⚑", "⚐", "웃", "유", "ツ",
+];
+
+const fontStyleSelect = document.getElementById("fontStyleSelect");
+const fontInput = document.getElementById("fontInput");
+const fontOutput = document.getElementById("fontOutput");
+const fontMsg = document.getElementById("fontMsg");
+
+function applyFontConversion() {
+  const style = FONT_STYLES.find((s) => s.id === fontStyleSelect.value) || FONT_STYLES[0];
+  fontOutput.value = style.convert(fontInput.value);
+}
+
+async function copyToClipboard(text, msgEl) {
+  if (!text) {
+    if (msgEl) setMsg(msgEl, "Nothing to copy yet.", "error");
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(text);
+    if (msgEl) setMsg(msgEl, "Copied!", "success");
+    return;
+  } catch (e) {
+    // clipboard API can be unavailable (e.g. a non-HTTPS context) — fall back to a manual copy
+  }
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.style.position = "fixed";
+  ta.style.opacity = "0";
+  document.body.appendChild(ta);
+  ta.select();
+  try {
+    document.execCommand("copy");
+    if (msgEl) setMsg(msgEl, "Copied!", "success");
+  } catch (e2) {
+    if (msgEl) setMsg(msgEl, "Couldn't copy — select and copy manually.", "error");
+  }
+  document.body.removeChild(ta);
+}
+
+function renderSymbolGrid(containerId, items) {
+  const el = document.getElementById(containerId);
+  el.innerHTML = items
+    .map((item, i) => `<button type="button" class="symbol-chip" data-index="${i}" title="${escapeHtml(item.label || item.char)}">${escapeHtml(item.display || item.char)}</button>`)
+    .join("");
+  el.querySelectorAll(".symbol-chip").forEach((chip) => {
+    const item = items[Number(chip.dataset.index)];
+    chip.addEventListener("click", async () => {
+      await copyToClipboard(item.char, null);
+      chip.classList.add("is-copied");
+      setTimeout(() => chip.classList.remove("is-copied"), 800);
+    });
+  });
+}
+
+function initFontsTab() {
+  fontsInitialized = true;
+  fontStyleSelect.innerHTML = FONT_STYLES.map((s) => `<option value="${s.id}">${s.label}</option>`).join("");
+  fontStyleSelect.addEventListener("change", applyFontConversion);
+  fontInput.addEventListener("input", applyFontConversion);
+
+  document.getElementById("fontCopyBtn").addEventListener("click", () => copyToClipboard(fontOutput.value, fontMsg));
+  document.getElementById("fontClearBtn").addEventListener("click", () => {
+    fontInput.value = "";
+    fontOutput.value = "";
+    setMsg(fontMsg, "", "");
+  });
+
+  renderSymbolGrid("invisibleCharGrid", INVISIBLE_CHARS);
+  renderSymbolGrid("arrowGrid", ARROW_CHARS.map((c) => ({ char: c })));
+  renderSymbolGrid("symbolGrid", SYMBOL_CHARS.map((c) => ({ char: c })));
+}
 
 // ---------- init ----------
 
