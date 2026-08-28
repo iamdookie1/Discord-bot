@@ -97,6 +97,20 @@ def guilds():
     return jsonify(bot_manager.get_guilds())
 
 
+@app.route("/api/guilds/leave", methods=["POST"])
+def leave_guild():
+    data = request.get_json(force=True, silent=True) or {}
+    guild_id = data.get("guild_id", "")
+
+    if bot_manager.status != "online":
+        return jsonify({"ok": False, "error": "Bot isn't connected yet."}), 400
+    if not guild_id:
+        return jsonify({"ok": False, "error": "Pick a server first."}), 400
+
+    result = bot_manager.leave_guild(guild_id)
+    return jsonify(result), (200 if result.get("ok") else 400)
+
+
 @app.route("/api/channels")
 def channels():
     guild_id = request.args.get("guild_id", "")

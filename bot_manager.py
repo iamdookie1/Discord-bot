@@ -137,6 +137,18 @@ class BotManager:
             if c.permissions_for(guild.me).connect
         ]
 
+    def leave_guild(self, guild_id: str) -> dict:
+        async def _leave():
+            guild = self.client.get_guild(int(guild_id))
+            if not guild:
+                return {"ok": False, "error": "Server not found — is the bot still in it?"}
+            name = guild.name
+            await guild.leave()
+            return {"ok": True, "name": name}
+
+        result = self._run_coro(_leave(), default=None)
+        return result or {"ok": False, "error": "Bot isn't connected."}
+
     def send_message(self, guild_id: str, channel_id: str, content: str):
         async def _send():
             channel = self.client.get_channel(int(channel_id))

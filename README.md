@@ -69,6 +69,7 @@ Open `http://127.0.0.1:5000` in your phone's browser. On a narrow screen the sid
 - Type a new name and hit **Update** to rename the bot on Discord directly — this fixes a bot name that looks "stuck" after being renamed in the Developer Portal, since it forces a real update instead of relying on a cached one
 - Choose an image and hit **Update profile picture** to change the bot's avatar
 - **Presence**: set what shows under the bot's name in the member list (Playing/Watching/Listening to/Competing in + text). Saved and reapplied automatically every time the bot connects.
+- **Leave a server**: pick a server the bot's actually in and hit **Leave** to remove it from that server entirely — asks for confirmation first, since it needs a fresh invite to come back.
 
 **Music tab** — a full-size player, separate from the compact card on the Text tab, with its own server picker so it doesn't have to match whatever server you're texting from:
 - **Now playing**: title, who requested it, a progress bar, elapsed/total time, and the full control row (Pause/Resume, Skip, Stop, Volume −/+, Loop) — polls once a second, same as the Text tab card

@@ -465,6 +465,18 @@
         <p class="form-msg" id="presenceMsg"></p>
       </div>
 
+      <div class="card">
+        <h2 class="card-title">Leave a server</h2>
+        <div class="field-row">
+          <select id="leaveServerSelect" class="field-input">
+            <option value="">Connect the bot first&hellip;</option>
+          </select>
+          <button class="btn-outline" id="leaveServerBtn">Leave</button>
+        </div>
+        <p class="field-hint">Removes the bot from the selected server entirely — it'll need to be re-invited to come back.</p>
+        <p class="form-msg" id="leaveServerMsg"></p>
+      </div>
+
       <div class="card" id="ttsSettingsCard" style="display:none;">
         <h2 class="card-title">TTS voice</h2>
         <p class="field-hint">How <span class="mono">!tts</span> sounds. Volume/speed/voice apply to everyone it reads; tone/pitch only shape your own messages.</p>
