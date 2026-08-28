@@ -52,6 +52,10 @@ except ImportError:
     _emoji_lib = None
 
 _HAS_ESPEAK = shutil.which("espeak-ng") is not None
+_HAS_FFMPEG = shutil.which("ffmpeg") is not None
+# espeak-ng's own WAV output — needed for the pitch-shift filters below,
+# since asetrate has to know the source rate to compute a ratio against it.
+_ESPEAK_SAMPLE_RATE = 22050
 
 MAX_TTS_CHARS = 300
 SYNTHESIZE_TIMEOUT = 15
@@ -86,12 +90,21 @@ _TTS_SETTINGS_DEFAULTS = {
     "pitch": 0,          # !pitch — pitch offset (-100 to 100), owner's own messages only
     "only_me": False,    # !onlytm — when on, only the owner's messages get read at all
     # Owner-only overrides, web UI only (no chat command) — when enabled,
-    # replaces "voice_slot"/"volume" above just for the owner's own
+    # replaces "voice_slot"/"volume"/"rate" above just for the owner's own
     # messages, on top of the tone/pitch personalization they already get.
     "owner_voice_override": False,
     "owner_voice_slot": 1,
     "owner_volume_override": False,
     "owner_volume": 100,
+    "owner_rate_override": False,
+    "owner_rate": 175,
+    # A post-processing audio filter (ffmpeg -af) applied only to the
+    # owner's synthesized speech, on top of everything else above — see
+    # OWNER_EFFECT_BUILDERS. "off" = no filter, same speech as espeak-ng
+    # produces it. owner_effect_params remembers each mode's last-tweaked
+    # slider values independently, same pattern as bot_music.py's effects.
+    "owner_effect_mode": "off",
+    "owner_effect_params": {},
 }
 
 # All 20 of these ship inside espeak-ng-data already, so !voiceselection
@@ -222,6 +235,112 @@ async def _synthesize_async(text: str, **kwargs):
     return await loop.run_in_executor(None, functools.partial(_synthesize, text, **kwargs))
 
 
+# ==================== owner-only voice effect ====================
+# A post-processing ffmpeg filter applied only to the owner's own
+# synthesized speech, on top of voice/volume/rate/tone/pitch above — same
+# filter-string-per-mode pattern as bot_music.py's music effects, just a
+# smaller set that makes sense for spoken word rather than a song.
+
+def _param(value, lo, hi, default):
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        return default
+    return max(lo, min(hi, value))
+
+
+def _reverb_taps(amount_pct):
+    amount = _param(amount_pct, 0, 100, 50) / 100
+    base_delays = [40, 60, 90, 120, 180, 250]
+    base_decays = [0.5, 0.4, 0.35, 0.25, 0.2, 0.15]
+    n = max(1, round(len(base_delays) * (0.3 + 0.7 * amount)))
+    delays = base_delays[:n]
+    decays = [round(d * (0.3 + 0.7 * amount), 3) for d in base_decays[:n]]
+    return f"aecho=0.8:0.7:{'|'.join(str(d) for d in delays)}:{'|'.join(str(d) for d in decays)}"
+
+
+def _filter_echo(p):
+    delay = int(_param(p.get("amount"), 100, 2000, 500))
+    return f"aecho=0.8:0.9:{delay}:0.4"
+
+
+def _filter_reverb(p):
+    return _reverb_taps(p.get("amount"))
+
+
+def _filter_deep(p):
+    ratio = 1 - _param(p.get("amount"), 0, 50, 20) / 100
+    return f"asetrate={_ESPEAK_SAMPLE_RATE}*{ratio:.4f},aresample={_ESPEAK_SAMPLE_RATE}"
+
+
+def _filter_high(p):
+    ratio = 1 + _param(p.get("amount"), 0, 100, 30) / 100
+    return f"asetrate={_ESPEAK_SAMPLE_RATE}*{ratio:.4f},aresample={_ESPEAK_SAMPLE_RATE}"
+
+
+def _filter_robot(p):
+    rate = _param(p.get("amount"), 5, 60, 20)
+    return f"aecho=0.8:0.5:{int(1000 / rate)}:0.6,asetrate={_ESPEAK_SAMPLE_RATE}*0.97,aresample={_ESPEAK_SAMPLE_RATE}"
+
+
+OWNER_EFFECT_BUILDERS = {
+    "echo": _filter_echo,
+    "reverb": _filter_reverb,
+    "deep": _filter_deep,
+    "high": _filter_high,
+    "robot": _filter_robot,
+}
+OWNER_EFFECT_MODES = ["off", "echo", "reverb", "deep", "high", "robot"]
+OWNER_EFFECT_LABELS = {
+    "off": "Off",
+    "echo": "Echo",
+    "reverb": "Reverb",
+    "deep": "Deep Voice",
+    "high": "High Pitch",
+    "robot": "Robot",
+}
+OWNER_EFFECT_PARAM_SPECS = {
+    "echo": [{"id": "amount", "label": "Delay", "min": 100, "max": 2000, "default": 500, "step": 50, "unit": "ms"}],
+    "reverb": [{"id": "amount", "label": "Amount", "min": 0, "max": 100, "default": 50, "step": 1, "unit": "%"}],
+    "deep": [{"id": "amount", "label": "Amount", "min": 0, "max": 50, "default": 20, "step": 1, "unit": "%"}],
+    "high": [{"id": "amount", "label": "Amount", "min": 0, "max": 100, "default": 30, "step": 1, "unit": "%"}],
+    "robot": [{"id": "amount", "label": "Buzz rate", "min": 5, "max": 60, "default": 20, "step": 1, "unit": "Hz"}],
+}
+
+
+def _owner_effect_params_for(settings: dict, mode: str = None) -> dict:
+    """Merges the stored per-mode slider values with that mode's defaults,
+    same idea as bot_music.py's _effect_params_for — lets the web UI always
+    display *something* sensible even before the owner has ever touched
+    that mode's sliders."""
+    mode = mode or settings.get("owner_effect_mode", "off")
+    specs = OWNER_EFFECT_PARAM_SPECS.get(mode, [])
+    stored = (settings.get("owner_effect_params") or {}).get(mode, {})
+    return {spec["id"]: stored.get(spec["id"], spec["default"]) for spec in specs}
+
+
+def _apply_owner_effect(wav_path: str, mode: str, params: dict) -> str:
+    """Runs `wav_path` through the chosen effect's ffmpeg filter, returning
+    a new temp file path (caller deletes both). Returns `wav_path`
+    unchanged if there's no effect to apply or ffmpeg isn't installed — a
+    filter that can't be applied shouldn't stop the message being read."""
+    if mode == "off" or mode not in OWNER_EFFECT_BUILDERS or not _HAS_FFMPEG:
+        return wav_path
+    filter_str = OWNER_EFFECT_BUILDERS[mode](params or {})
+    fd, out_path = tempfile.mkstemp(suffix=".wav", prefix="tts_fx_")
+    os.close(fd)
+    try:
+        subprocess.run(
+            ["ffmpeg", "-y", "-i", wav_path, "-af", filter_str, out_path],
+            capture_output=True, timeout=SYNTHESIZE_TIMEOUT, check=True,
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
+        if os.path.exists(out_path):
+            os.remove(out_path)
+        return wav_path
+    return out_path
+
+
 class _PriorityQueue:
     """A deque-backed async queue that lets the owner's messages jump to
     the front instead of waiting in line — see maybe_enqueue, which also
@@ -286,7 +405,11 @@ async def _worker(guild: discord.Guild, state: GuildTTSState):
             if is_owner and settings.get("owner_volume_override"):
                 amplitude = settings["owner_volume"]
 
-            synth_kwargs = {"voice": voice_slot[0], "amplitude": amplitude, "wpm": settings["rate"]}
+            wpm = settings["rate"]
+            if is_owner and settings.get("owner_rate_override"):
+                wpm = settings["owner_rate"]
+
+            synth_kwargs = {"voice": voice_slot[0], "amplitude": amplitude, "wpm": wpm}
             if is_owner:
                 synth_kwargs["pitch_pct"] = settings["pitch"]
                 synth_kwargs["range_pct"] = settings["tone"] * 20
@@ -294,6 +417,18 @@ async def _worker(guild: discord.Guild, state: GuildTTSState):
             path = await _synthesize_async(text, **synth_kwargs)
             if not path:
                 continue
+
+            if is_owner:
+                effect_mode = settings.get("owner_effect_mode", "off")
+                if effect_mode != "off":
+                    effect_params = _owner_effect_params_for(settings, effect_mode)
+                    processed = await loop.run_in_executor(
+                        None, functools.partial(_apply_owner_effect, path, effect_mode, effect_params)
+                    )
+                    if processed != path:
+                        if os.path.exists(path):
+                            os.remove(path)
+                        path = processed
 
             done = asyncio.Event()
 
@@ -633,6 +768,10 @@ async def handle_status(ctx):
         lines.append(f"Your voice override: **{owner_voice}** (#{s['owner_voice_slot']})")
     if s.get("owner_volume_override"):
         lines.append(f"Your volume override: **{s['owner_volume']}**")
+    if s.get("owner_rate_override"):
+        lines.append(f"Your speed override: **{s['owner_rate']}** wpm")
+    if s.get("owner_effect_mode", "off") != "off":
+        lines.append(f"Your voice effect: **{OWNER_EFFECT_LABELS.get(s['owner_effect_mode'], s['owner_effect_mode'])}** (web only)")
     await ctx.send("\n".join(lines))
 
 
@@ -699,21 +838,30 @@ TTS_SETTING_SPECS = [
 
 # Owner-only overrides — separate from the specs above since each one is
 # paired with its own on/off toggle in the web UI (owner_voice_slot only
-# applies when owner_voice_override is true, same for the volume pair).
+# applies when owner_voice_override is true, same for volume/rate).
 OWNER_TTS_SETTING_SPECS = [
     {"id": "owner_volume", "label": "My volume", "min": 0, "max": 500, "step": 1, "unit": "%"},
+    {"id": "owner_rate", "label": "My speed", "min": 80, "max": 400, "step": 5, "unit": " wpm"},
 ]
 
 
 def web_get_tts_settings() -> dict:
+    settings = _load_tts_settings()
     return {
         "ok": True,
         "available": _HAS_ESPEAK,
         "unavailable_reason": _unavailable_reason(),
-        "settings": _load_tts_settings(),
+        "settings": settings,
         "specs": TTS_SETTING_SPECS,
         "owner_specs": OWNER_TTS_SETTING_SPECS,
         "voices": [{"slot": n, "label": label} for n, (_id, label) in sorted(VOICE_SLOTS.items())],
+        # The owner-only voice effect — same shape as bot_music.py's music
+        # effects, just its own smaller mode list, spec table, and params.
+        "owner_effect_modes": OWNER_EFFECT_MODES,
+        "owner_effect_labels": OWNER_EFFECT_LABELS,
+        "owner_effect_param_specs": OWNER_EFFECT_PARAM_SPECS,
+        "owner_effect_params": _owner_effect_params_for(settings),
+        "effects_available": _HAS_FFMPEG,
     }
 
 
@@ -739,9 +887,27 @@ def web_update_tts_settings(updates: dict) -> dict:
                 return {"ok": False, "error": f"No voice #{slot}."}
             settings[key] = slot
 
-    for key in ("only_me", "owner_voice_override", "owner_volume_override"):
+    for key in ("only_me", "owner_voice_override", "owner_volume_override", "owner_rate_override"):
         if key in updates:
             settings[key] = bool(updates[key])
 
+    if "owner_effect_mode" in updates:
+        mode = updates["owner_effect_mode"]
+        if mode not in OWNER_EFFECT_MODES:
+            return {"ok": False, "error": "Unknown effect mode."}
+        settings["owner_effect_mode"] = mode
+
+    if "owner_effect_params" in updates and isinstance(updates["owner_effect_params"], dict):
+        mode = settings["owner_effect_mode"]
+        specs = OWNER_EFFECT_PARAM_SPECS.get(mode)
+        if specs:
+            clamped = {
+                s["id"]: _param(updates["owner_effect_params"].get(s["id"]), s["min"], s["max"], s["default"])
+                for s in specs
+            }
+            all_params = dict(settings.get("owner_effect_params") or {})
+            all_params[mode] = clamped
+            settings["owner_effect_params"] = all_params
+
     _save_tts_settings(settings)
-    return {"ok": True, "settings": settings}
+    return {"ok": True, "settings": settings, "owner_effect_params": _owner_effect_params_for(settings)}

@@ -930,12 +930,18 @@ const ttsSettingsMsg = document.getElementById("ttsSettingsMsg");
 const ownerVoiceSelect = document.getElementById("ownerVoiceSelect");
 const ownerVoiceOverrideCheckbox = document.getElementById("ownerVoiceOverrideCheckbox");
 const ownerVolumeOverrideCheckbox = document.getElementById("ownerVolumeOverrideCheckbox");
+const ownerRateOverrideCheckbox = document.getElementById("ownerRateOverrideCheckbox");
 const ownerTtsSliders = document.getElementById("ownerTtsSliders");
+const ownerEffectSelect = document.getElementById("ownerEffectSelect");
+const ownerEffectSliders = document.getElementById("ownerEffectSliders");
+const ownerEffectUnavailable = document.getElementById("ownerEffectUnavailable");
 
 let ttsSlidersDirty = false;
 let ttsSlidersBuilt = false;
 let ownerTtsSlidersDirty = false;
 let ownerTtsSlidersBuilt = false;
+let ownerEffectSlidersDirty = false;
+let ownerEffectLastMode = null;
 
 function buildTtsSliderGroup(container, specs, settings, dirty) {
   container.innerHTML = specs.map((spec) => `
@@ -970,6 +976,62 @@ function refreshTtsSliderGroup(container, specs, settings) {
   });
 }
 
+function renderOwnerEffectSliders(data) {
+  const mode = ownerEffectSelect.value;
+  const specs = (data.owner_effect_param_specs && data.owner_effect_param_specs[mode]) || [];
+
+  if (!specs.length) {
+    ownerEffectSliders.style.display = "none";
+    ownerEffectSliders.innerHTML = "";
+    ownerEffectLastMode = mode;
+    return;
+  }
+  ownerEffectSliders.style.display = "flex";
+
+  if (mode !== ownerEffectLastMode) {
+    const values = data.owner_effect_params || {};
+    ownerEffectSliders.innerHTML = specs.map((spec) => `
+      <div class="music-effect-slider-row" data-param-id="${spec.id}">
+        <label class="field-label">
+          <span>${escapeHtml(spec.label)}</span>
+          <span class="mono owner-effect-slider-value">${values[spec.id] ?? spec.default}${spec.unit || ""}</span>
+        </label>
+        <input type="range" class="field-range owner-effect-slider-input" min="${spec.min}" max="${spec.max}" step="${spec.step}" value="${values[spec.id] ?? spec.default}">
+      </div>
+    `).join("");
+    ownerEffectSliders.querySelectorAll(".owner-effect-slider-input").forEach((input) => {
+      const row = input.closest(".music-effect-slider-row");
+      const spec = specs.find((s) => s.id === row.dataset.paramId);
+      input.addEventListener("pointerdown", () => { ownerEffectSlidersDirty = true; });
+      input.addEventListener("input", () => {
+        row.querySelector(".owner-effect-slider-value").textContent = `${input.value}${spec.unit || ""}`;
+      });
+      input.addEventListener("change", () => {
+        ownerEffectSlidersDirty = false;
+        submitOwnerEffectParams();
+      });
+    });
+    ownerEffectLastMode = mode;
+  } else if (!ownerEffectSlidersDirty) {
+    const values = data.owner_effect_params || {};
+    ownerEffectSliders.querySelectorAll(".music-effect-slider-row").forEach((row) => {
+      const spec = specs.find((s) => s.id === row.dataset.paramId);
+      if (!spec) return;
+      const v = values[spec.id] ?? spec.default;
+      row.querySelector(".owner-effect-slider-input").value = v;
+      row.querySelector(".owner-effect-slider-value").textContent = `${v}${spec.unit || ""}`;
+    });
+  }
+}
+
+function submitOwnerEffectParams() {
+  const params = {};
+  ownerEffectSliders.querySelectorAll(".music-effect-slider-row").forEach((row) => {
+    params[row.dataset.paramId] = Number(row.querySelector(".owner-effect-slider-input").value);
+  });
+  saveTtsSettings({ owner_effect_params: params });
+}
+
 async function loadTtsSettings() {
   const data = await api("/api/tts/settings");
   if (!data.available) {
@@ -988,6 +1050,7 @@ async function loadTtsSettings() {
   ownerVoiceSelect.value = data.settings.owner_voice_slot;
   ownerVoiceOverrideCheckbox.checked = !!data.settings.owner_voice_override;
   ownerVolumeOverrideCheckbox.checked = !!data.settings.owner_volume_override;
+  ownerRateOverrideCheckbox.checked = !!data.settings.owner_rate_override;
 
   if (!ttsSlidersBuilt) {
     buildTtsSliderGroup(ttsSliders, data.specs, data.settings, {
@@ -1006,6 +1069,15 @@ async function loadTtsSettings() {
   } else if (!ownerTtsSlidersDirty) {
     refreshTtsSliderGroup(ownerTtsSliders, data.owner_specs, data.settings);
   }
+
+  if (ownerEffectSelect.options.length !== (data.owner_effect_modes || []).length) {
+    ownerEffectSelect.innerHTML = data.owner_effect_modes
+      .map((m) => `<option value="${m}">${escapeHtml(data.owner_effect_labels[m] || m)}</option>`)
+      .join("");
+  }
+  ownerEffectSelect.value = data.settings.owner_effect_mode;
+  ownerEffectUnavailable.style.display = data.effects_available ? "none" : "block";
+  renderOwnerEffectSliders(data);
 }
 
 async function saveTtsSettings(updates) {
@@ -1016,6 +1088,7 @@ async function saveTtsSettings(updates) {
   });
   if (!data.ok) setMsg(ttsSettingsMsg, data.error || "Couldn't save that.", "error");
   else setMsg(ttsSettingsMsg, "Saved.", "success");
+  return data;
 }
 
 ttsVoiceSelect.addEventListener("change", () => saveTtsSettings({ voice_slot: Number(ttsVoiceSelect.value) }));
@@ -1023,6 +1096,11 @@ ttsOnlyMeCheckbox.addEventListener("change", () => saveTtsSettings({ only_me: tt
 ownerVoiceSelect.addEventListener("change", () => saveTtsSettings({ owner_voice_slot: Number(ownerVoiceSelect.value) }));
 ownerVoiceOverrideCheckbox.addEventListener("change", () => saveTtsSettings({ owner_voice_override: ownerVoiceOverrideCheckbox.checked }));
 ownerVolumeOverrideCheckbox.addEventListener("change", () => saveTtsSettings({ owner_volume_override: ownerVolumeOverrideCheckbox.checked }));
+ownerRateOverrideCheckbox.addEventListener("change", () => saveTtsSettings({ owner_rate_override: ownerRateOverrideCheckbox.checked }));
+ownerEffectSelect.addEventListener("change", async () => {
+  await saveTtsSettings({ owner_effect_mode: ownerEffectSelect.value });
+  loadTtsSettings();
+});
 
 // ---------- cmds tab ----------
 

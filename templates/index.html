@@ -493,7 +493,20 @@
             <input type="checkbox" id="ownerVolumeOverrideCheckbox">
             <span>Use a different volume for me</span>
           </label>
+
+          <label class="checkbox-row">
+            <input type="checkbox" id="ownerRateOverrideCheckbox">
+            <span>Use a different speed for me</span>
+          </label>
+
           <div id="ownerTtsSliders"></div>
+
+          <div>
+            <label class="field-label" for="ownerEffectSelect">Voice effect (my messages only)</label>
+            <select id="ownerEffectSelect" class="field-input"></select>
+          </div>
+          <div id="ownerEffectSliders" class="music-effect-sliders" style="display:none;"></div>
+          <p class="field-hint" id="ownerEffectUnavailable" style="display:none; margin:0;">Needs the <span class="mono">ffmpeg</span> binary to apply — the effect will save but won't actually change the sound until it's installed.</p>
         </div>
 
         <p class="form-msg" id="ttsSettingsMsg"></p>
