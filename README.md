@@ -5,10 +5,9 @@ local web UI at `http://127.0.0.1:5000` instead of the command line.
 .
 ## What's in here
 
-- `setup.sh` — Termux system-package check (installs anything missing), then lets you choose which app to launch (Discord bot or Voice Speaker)
-- `run.py` — checks/installs the required **Python** packages, then starts the Discord bot's server
-- `app.py` — the Discord bot's Flask app: all the `/api/...` routes the UI talks to
-- `voicespeak/` — a completely separate app in this same repo: type text into a web page, this device reads it out loud. No Discord connection at all — see its own section below.
+- `setup.sh` — Termux system-package check (installs anything missing), then launches the app
+- `run.py` — checks/installs the required **Python** packages, then starts the server
+- `app.py` — the Flask app: all the `/api/...` routes the UI talks to
 - `bot_manager.py` — runs the actual discord.py client in the background, plus the web moderation panel's actions (kick/ban/timeout/warn/etc., mirroring the chat commands)
 - `bot_commands.py` — utility + moderation `!commands`, on/off toggle storage, per-user command cooldowns, and the custom-command sandbox
 - `bot_music.py` — the `!join`/`!play`/`!menu`/... voice commands, the interactive now-playing menu, and playback state
@@ -38,7 +37,8 @@ bash setup.sh
 `setup.sh` will:
 1. Pull the latest changes from GitHub (`git pull`) — skipped automatically if you're offline or aren't running from a git checkout
 2. Make sure the Termux system packages `python`, `git`, `libffi`, `openssl` are present (installs any that are missing)
-3. Ask which app to launch — `1) Discord bot` or `2) Voice speaker` — then run that app's own package check and start its server
+3. Run `run.py`, which checks whether `flask` and `discord.py` are installed in Python and installs whichever are missing
+4. Start the server and print `http://127.0.0.1:5000`
 
 Every time after that, just run:
 
@@ -46,10 +46,9 @@ Every time after that, just run:
 bash setup.sh
 ```
 
-and it'll auto-update itself before asking again. Skip the prompt by passing
-your choice directly: `bash setup.sh bot` or `bash setup.sh voice`. If you
-ever want to update without launching anything, `git pull` in the project
-folder does the same thing `setup.sh` does automatically.
+and it'll auto-update itself before starting. If you ever want to update
+without launching the app, `git pull` in the project folder does the same
+thing `setup.sh` does automatically.
 
 ## Using the UI
 
@@ -97,11 +96,13 @@ Open `http://127.0.0.1:5000` in your phone's browser. On a narrow screen the sid
 **`!tts`** — reads a text channel's messages aloud in voice, for anyone who'd rather type than talk:
 - Run `!tts` in any text channel while you're in a voice channel to turn it on — the bot joins your voice channel and links it to that text channel. Run `!tts` again (in that same text channel) to turn it off and leave.
 - Only reads messages posted in the linked text channel by people currently sitting in the linked voice channel — not everyone in the server, and not the message author's actual voice, just their typed words read aloud.
-- Strips before speaking: links, custom/unicode emoji, spoiler-tagged text (not read at all), markdown symbols, and mentions (replaced with the person's display name so it still reads naturally). A message with nothing left to say after that — just a GIF/link/emoji — is silently skipped, as is anything over 300 characters.
+- Strips before speaking: links, custom/unicode emoji, spoiler-tagged text (not read at all), markdown symbols, and mentions (replaced with the person's display name so it still reads naturally). A message with nothing left to say after that — just a GIF/link/emoji — is silently skipped, as is anything over 300 characters, except for the owner's own messages, which have no length cap at all. Short (1-2 letter) all-caps words like "IT" or "HI" are also lowercased before speaking — espeak-ng otherwise spells a handful of these out letter-by-letter ("I. T.") as if they were abbreviations, while leaving genuine acronyms (FBI, NASA, ...) alone.
 - Uses `espeak-ng` (installed via `setup.sh`) — fully offline, no external API, so it can't go down the way an unofficial web TTS service could.
 - Music and TTS share the bot's one voice connection per server, so only one can run at a time: `!tts` refuses to start while music is playing ("Sorry, music's playing right now"), and music commands refuse to start while TTS is on ("Sorry, TTS is on right now") — turn one off to use the other.
-- A handful of extra sound controls exist as chat commands but are hidden: `!tone`, `!pitch`, `!onlytm`, `!voiceselection`, `!volume`. Same lockdown as `!allowchannelrp` above — silent no-op for anyone but Discord user ID `1409771422011887678`, left out of `!cmds`/`!help` entirely, chat-only. `!voiceselection <1-20>` and `!volume <0-200>` pick which of espeak-ng's built-in voices to use and how loud it is — apply to everyone TTS reads, no download needed since all 20 ship with espeak-ng already. `!tone <1-10>` and `!pitch <-100 to 100>` only change how *the owner's own* messages sound (everyone else is unaffected) — a personal flourish rather than a server-wide setting. `!onlytm` toggles reading only the owner's own messages, ignoring everyone else in the linked voice channel.
+- Messages queue up and get read one at a time, in order — except the owner's own, which jump straight to the front and interrupt whatever's currently being read, so they're heard right away instead of waiting behind everyone else.
+- A handful of extra sound controls exist as chat commands but are hidden: `!tone`, `!pitch`, `!onlytm`, `!voiceselection`, `!volume`. Same lockdown as `!allowchannelrp` above — silent no-op for anyone but Discord user ID `1409771422011887678`, left out of `!cmds`/`!help` entirely, chat-only. `!voiceselection <1-20>` and `!volume <0-500>` pick which of espeak-ng's built-in voices to use and how loud it is — apply to everyone TTS reads, no download needed since all 20 ship with espeak-ng already (above 200 gets loud/distorted fast, but espeak-ng doesn't reject it). `!tone <1-10>` and `!pitch <-100 to 100>` only change how *the owner's own* messages sound (everyone else is unaffected) — a personal flourish rather than a server-wide setting. `!onlytm` toggles reading only the owner's own messages, ignoring everyone else in the linked voice channel.
 - These same settings, plus a new **Speed** slider (80-400 words/minute, espeak-ng's own `-s` rate flag), are also editable from a **TTS voice** card on the **Bot** tab — voice dropdown, only-me toggle, and sliders for volume/speed/tone/pitch, saved instantly as you let go of each control. Unlike the chat commands, the web card has no owner check: the web UI is a single-operator surface already, so anything reachable there is implicitly trusted.
+- The same card also has two more owner-only overrides, web-only (no chat command): a toggle + dropdown to use a **different voice** just for the owner's own messages, and a toggle + slider for a **different volume**, both layered on top of the tone/pitch personalization above — everyone else keeps hearing the base voice/volume either way.
 
 **Mod tab** — every moderation command has a web equivalent here now, not just the six original ones:
 - **Server settings**: music channel, mod-log channel (optional — kicks/bans/timeouts/warns/mutes/tempbans post there as an embed), and mute role (the role `Mute`/`Unmute` below add/remove — set once here, same as `!muterole` in chat).
@@ -144,35 +145,6 @@ Open `http://127.0.0.1:5000` in your phone's browser. On a narrow screen the sid
   - **Full wipe and replace** — deletes every existing channel and role in the target server first, then recreates the backup exactly. Irreversible, so the button asks for an explicit confirmation before doing anything.
 - The bot needs **Manage Roles** and **Manage Channels** permission in the target server for either mode to work.
 - Large servers can take a while to save/restore — Discord rate-limits how fast channels and roles can be created, so this isn't instant.
-
-## Voice Speaker (standalone app)
-
-A completely separate app living in `voicespeak/` — type text into a web page
-at `http://127.0.0.1:5050` and this device reads it out loud. No Discord
-connection, no bot token, nothing shared with the bot at runtime; it only
-lives in the same repo so `setup.sh` can launch either one.
-
-- **Launch it**: `bash setup.sh` and choose `2`, or skip the prompt with
-  `bash setup.sh voice`. To run it directly without the menu:
-  `cd voicespeak && python run.py`.
-- **Voices**: the same 20 hand-picked espeak-ng variants as the bot's `!tts`
-  (Male/Female/Whisper/Robotic/Grandma/British/etc.), plus every other
-  language espeak-ng ships with — 100+ more, discovered automatically from
-  `espeak-ng --voices` so the list always matches what's actually installed.
-- **Sliders**: Volume, Speed (words/minute), Tone, and Pitch — same ranges
-  and meaning as the bot's TTS settings.
-- **Effects**: the same live effect palette as the Music tab (Nightcore,
-  Vaporwave, Chipmunk, Slowed + Reverb, Reverb, Echo, Bass Boost, 8D,
-  Muffled, Radio, and Custom with independent speed/pitch sliders), applied
-  to the synthesized speech with the exact same ffmpeg filters — pick one
-  and its sliders appear right under the picker.
-- **Playback**: plays through whatever audio output Android currently has
-  selected — the phone speaker, wired headphones, or a connected Bluetooth
-  headset — via Termux:API's `termux-media-player`. Needs the separate
-  **Termux:API** app (F-Droid/Play Store) plus `pkg install termux-api`; on
-  a regular desktop OS it falls back to `ffplay`/`paplay`/`aplay`/`afplay`,
-  whichever is installed. A banner explains what's missing if neither is
-  found, instead of the Speak button silently doing nothing.
 
 ## Getting a bot token
 

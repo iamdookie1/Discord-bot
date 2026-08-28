@@ -16,8 +16,9 @@ choice here even though the voice is more robotic for it.
 Messages are sanitized before being spoken: URLs, custom/unicode emoji,
 spoiler-tagged text, and markdown syntax are stripped; mentions are
 replaced with the mentioned person's display name. A message that's
-nothing but a link/emoji/GIF (i.e. nothing left after sanitizing), or
-that's over MAX_TTS_CHARS, is silently skipped rather than read.
+nothing but a link/emoji/GIF (i.e. nothing left after sanitizing) is
+silently skipped rather than read; so is one over MAX_TTS_CHARS, unless
+it's from the owner — their own messages have no length cap.
 
 Because a guild can only have one voice connection, TTS and music (see
 bot_music.py) take turns — voice_owner.py is the shared registry that
@@ -30,6 +31,7 @@ They're dispatched specially from bot_commands.py (like RP's
 they're silent no-ops for anyone but the owner and don't show up in !cmds.
 """
 import asyncio
+import collections
 import functools
 import json
 import os
@@ -58,6 +60,14 @@ _SPOILER_RE = re.compile(r"\|\|.*?\|\|", re.DOTALL)
 _URL_RE = re.compile(r"https?://\S+")
 _CUSTOM_EMOJI_RE = re.compile(r"<a?:\w+:\d+>")
 _MD_CHARS_RE = re.compile(r"[*_~`]")
+# espeak-ng keeps a fixed internal list of short all-caps tokens it always
+# spells out letter-by-letter as if they were abbreviations — "IT" becomes
+# "I. T.", "HI" becomes "H. I.", etc — even though most other equally-short
+# all-caps words (AT, AN, GO, IS, ...) read fine as themselves. Lowercasing
+# 1-2 letter all-caps words sidesteps that list entirely without touching
+# genuine 3+ letter acronyms (FBI, NASA, USA, ...), which espeak-ng spells
+# out correctly on purpose.
+_SHORT_CAPS_RE = re.compile(r"\b[A-Z]{1,2}\b")
 
 
 # ==================== owner controls ====================
@@ -69,12 +79,19 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TTS_SETTINGS_PATH = os.path.join(BASE_DIR, "tts_settings.json")
 
 _TTS_SETTINGS_DEFAULTS = {
-    "voice_slot": 1,   # !voiceselection — which VOICE_SLOTS entry, applies to everyone
-    "volume": 100,     # !volume — espeak-ng amplitude (0-200, 100 = normal), applies to everyone
-    "rate": 175,       # speaking speed in words/minute (80-400, 175 = espeak-ng default), applies to everyone
-    "tone": 5,         # !tone — pitch range/expressiveness (1-10), owner's own messages only
-    "pitch": 0,        # !pitch — pitch offset (-100 to 100), owner's own messages only
-    "only_me": False,  # !onlytm — when on, only the owner's messages get read at all
+    "voice_slot": 1,     # !voiceselection — which VOICE_SLOTS entry, applies to everyone
+    "volume": 100,       # !volume — espeak-ng amplitude (0-500, 100 = normal), applies to everyone
+    "rate": 175,         # speaking speed in words/minute (80-400, 175 = espeak-ng default), applies to everyone
+    "tone": 5,           # !tone — pitch range/expressiveness (1-10), owner's own messages only
+    "pitch": 0,          # !pitch — pitch offset (-100 to 100), owner's own messages only
+    "only_me": False,    # !onlytm — when on, only the owner's messages get read at all
+    # Owner-only overrides, web UI only (no chat command) — when enabled,
+    # replaces "voice_slot"/"volume" above just for the owner's own
+    # messages, on top of the tone/pitch personalization they already get.
+    "owner_voice_override": False,
+    "owner_voice_slot": 1,
+    "owner_volume_override": False,
+    "owner_volume": 100,
 }
 
 # All 20 of these ship inside espeak-ng-data already, so !voiceselection
@@ -133,8 +150,9 @@ def _unavailable_reason():
 
 def sanitize_message(message: discord.Message):
     """Returns the text to speak for this message, or None if there's
-    nothing speakable left (or it's too long) — auto-detects and drops
-    emoji/links/GIFs/spoilers rather than reading them literally."""
+    nothing speakable left — auto-detects and drops emoji/links/GIFs/
+    spoilers rather than reading them literally. Too-long messages are
+    dropped too, except for the owner's own — see MAX_TTS_CHARS."""
     text = message.content
     text = _SPOILER_RE.sub("", text)
     text = _URL_RE.sub("", text)
@@ -149,9 +167,12 @@ def sanitize_message(message: discord.Message):
         text = _emoji_lib.replace_emoji(text, replace="")
 
     text = _MD_CHARS_RE.sub("", text)
+    text = _SHORT_CAPS_RE.sub(lambda m: m.group(0).lower(), text)
     text = " ".join(text.split())
 
-    if not text or len(text) > MAX_TTS_CHARS:
+    if not text:
+        return None
+    if len(text) > MAX_TTS_CHARS and message.author.id != OWNER_ID:
         return None
     return text
 
@@ -201,11 +222,36 @@ async def _synthesize_async(text: str, **kwargs):
     return await loop.run_in_executor(None, functools.partial(_synthesize, text, **kwargs))
 
 
+class _PriorityQueue:
+    """A deque-backed async queue that lets the owner's messages jump to
+    the front instead of waiting in line — see maybe_enqueue, which also
+    interrupts whatever's currently playing so an owner message is heard
+    right away instead of after everyone already ahead of them."""
+
+    def __init__(self):
+        self._items = collections.deque()
+        self._event = asyncio.Event()
+
+    def put_back(self, item):
+        self._items.append(item)
+        self._event.set()
+
+    def put_front(self, item):
+        self._items.appendleft(item)
+        self._event.set()
+
+    async def get(self):
+        while not self._items:
+            self._event.clear()
+            await self._event.wait()
+        return self._items.popleft()
+
+
 class GuildTTSState:
     def __init__(self):
         self.text_channel_id = None
         self.voice_channel_id = None
-        self.queue: asyncio.Queue = asyncio.Queue()
+        self.queue = _PriorityQueue()
         self.worker_task = None
 
 
@@ -229,9 +275,19 @@ async def _worker(guild: discord.Guild, state: GuildTTSState):
                 break
 
             settings = _load_tts_settings()
-            voice_slot = VOICE_SLOTS.get(settings["voice_slot"], VOICE_SLOTS[1])
-            synth_kwargs = {"voice": voice_slot[0], "amplitude": settings["volume"], "wpm": settings["rate"]}
-            if message.author.id == OWNER_ID:
+            is_owner = message.author.id == OWNER_ID
+
+            voice_key = settings["voice_slot"]
+            if is_owner and settings.get("owner_voice_override"):
+                voice_key = settings["owner_voice_slot"]
+            voice_slot = VOICE_SLOTS.get(voice_key, VOICE_SLOTS[1])
+
+            amplitude = settings["volume"]
+            if is_owner and settings.get("owner_volume_override"):
+                amplitude = settings["owner_volume"]
+
+            synth_kwargs = {"voice": voice_slot[0], "amplitude": amplitude, "wpm": settings["rate"]}
+            if is_owner:
                 synth_kwargs["pitch_pct"] = settings["pitch"]
                 synth_kwargs["range_pct"] = settings["tone"] * 20
 
@@ -319,7 +375,13 @@ def maybe_enqueue(message: discord.Message):
     """Called from bot_manager.py's on_message for every message (not just
     commands) — enqueues it for TTS if this guild has TTS on, the message
     is in the linked text channel, and the author is currently in the
-    linked voice channel."""
+    linked voice channel.
+
+    The owner's own messages jump straight to the front of the queue and,
+    if something's already playing, interrupt it right away instead of
+    waiting their turn — vc.stop() fires the current source's `after`
+    callback, which is what actually unblocks _worker to pick up the next
+    (now front-of-queue) item immediately."""
     if not message.guild or message.author.bot:
         return
     state = _states.get(message.guild.id)
@@ -327,7 +389,8 @@ def maybe_enqueue(message: discord.Message):
         return
     if message.content.startswith("!"):
         return  # commands aren't read aloud
-    if _load_tts_settings()["only_me"] and message.author.id != OWNER_ID:
+    is_owner = message.author.id == OWNER_ID
+    if _load_tts_settings()["only_me"] and not is_owner:
         return  # !onlytm is on — only the owner's own messages get read
     vc = message.guild.voice_client
     if not vc:
@@ -335,7 +398,13 @@ def maybe_enqueue(message: discord.Message):
     author_voice = getattr(message.author, "voice", None)
     if not author_voice or not author_voice.channel or author_voice.channel.id != vc.channel.id:
         return
-    state.queue.put_nowait(message)
+
+    if is_owner:
+        state.queue.put_front(message)
+        if vc.is_playing():
+            vc.stop()
+    else:
+        state.queue.put_back(message)
 
 
 # ==================== owner commands ====================
@@ -435,22 +504,23 @@ async def handle_voice_selection(ctx):
 
 
 async def handle_volume(ctx):
-    """!volume <0-200> — espeak-ng amplitude, applies to everyone (100 is
-    normal). Not to be confused with music's separate !volume-equivalent
+    """!volume <0-500> — espeak-ng amplitude, applies to everyone (100 is
+    normal; above 200 gets loud/distorted fast, but espeak-ng doesn't
+    reject it). Not to be confused with music's separate !volume-equivalent
     controls in the web UI — this is TTS-only."""
     if ctx.author.id != OWNER_ID:
         return
     settings = _load_tts_settings()
     if not ctx.args:
-        await ctx.send(f"Current TTS volume: **{settings['volume']}**. Usage: `!volume <0-200>` — applies to everyone (100 is normal).")
+        await ctx.send(f"Current TTS volume: **{settings['volume']}**. Usage: `!volume <0-500>` — applies to everyone (100 is normal).")
         return
     try:
         value = int(ctx.args[0])
     except ValueError:
-        await ctx.send("Volume must be a whole number from 0 to 200.")
+        await ctx.send("Volume must be a whole number from 0 to 500.")
         return
-    if not (0 <= value <= 200):
-        await ctx.send("Volume must be between 0 and 200 (100 is normal).")
+    if not (0 <= value <= 500):
+        await ctx.send("Volume must be between 0 and 500 (100 is normal).")
         return
     _update_tts_setting("volume", value)
     await ctx.send(f"TTS volume set to **{value}** — applies to everyone.")
@@ -469,10 +539,17 @@ TTS_COMMANDS = {
 # do everything else these settings affect.
 
 TTS_SETTING_SPECS = [
-    {"id": "volume", "label": "Volume", "min": 0, "max": 200, "step": 1, "unit": "%"},
+    {"id": "volume", "label": "Volume", "min": 0, "max": 500, "step": 1, "unit": "%"},
     {"id": "rate", "label": "Speed", "min": 80, "max": 400, "step": 5, "unit": " wpm"},
     {"id": "tone", "label": "Tone (your messages only)", "min": 1, "max": 10, "step": 1, "unit": ""},
     {"id": "pitch", "label": "Pitch (your messages only)", "min": -100, "max": 100, "step": 5, "unit": ""},
+]
+
+# Owner-only overrides — separate from the specs above since each one is
+# paired with its own on/off toggle in the web UI (owner_voice_slot only
+# applies when owner_voice_override is true, same for the volume pair).
+OWNER_TTS_SETTING_SPECS = [
+    {"id": "owner_volume", "label": "My volume", "min": 0, "max": 500, "step": 1, "unit": "%"},
 ]
 
 
@@ -483,13 +560,14 @@ def web_get_tts_settings() -> dict:
         "unavailable_reason": _unavailable_reason(),
         "settings": _load_tts_settings(),
         "specs": TTS_SETTING_SPECS,
+        "owner_specs": OWNER_TTS_SETTING_SPECS,
         "voices": [{"slot": n, "label": label} for n, (_id, label) in sorted(VOICE_SLOTS.items())],
     }
 
 
 def web_update_tts_settings(updates: dict) -> dict:
     settings = _load_tts_settings()
-    bounds = {spec["id"]: (spec["min"], spec["max"]) for spec in TTS_SETTING_SPECS}
+    bounds = {spec["id"]: (spec["min"], spec["max"]) for spec in TTS_SETTING_SPECS + OWNER_TTS_SETTING_SPECS}
 
     for key, (lo, hi) in bounds.items():
         if key in updates:
@@ -499,17 +577,19 @@ def web_update_tts_settings(updates: dict) -> dict:
                 return {"ok": False, "error": f"{key} must be a whole number."}
             settings[key] = max(lo, min(hi, value))
 
-    if "voice_slot" in updates:
-        try:
-            slot = int(updates["voice_slot"])
-        except (TypeError, ValueError):
-            return {"ok": False, "error": "voice_slot must be a whole number."}
-        if slot not in VOICE_SLOTS:
-            return {"ok": False, "error": f"No voice #{slot}."}
-        settings["voice_slot"] = slot
+    for key in ("voice_slot", "owner_voice_slot"):
+        if key in updates:
+            try:
+                slot = int(updates[key])
+            except (TypeError, ValueError):
+                return {"ok": False, "error": f"{key} must be a whole number."}
+            if slot not in VOICE_SLOTS:
+                return {"ok": False, "error": f"No voice #{slot}."}
+            settings[key] = slot
 
-    if "only_me" in updates:
-        settings["only_me"] = bool(updates["only_me"])
+    for key in ("only_me", "owner_voice_override", "owner_volume_override"):
+        if key in updates:
+            settings[key] = bool(updates[key])
 
     _save_tts_settings(settings)
     return {"ok": True, "settings": settings}

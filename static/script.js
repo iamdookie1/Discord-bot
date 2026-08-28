@@ -927,9 +927,48 @@ const ttsVoiceSelect = document.getElementById("ttsVoiceSelect");
 const ttsOnlyMeCheckbox = document.getElementById("ttsOnlyMeCheckbox");
 const ttsSliders = document.getElementById("ttsSliders");
 const ttsSettingsMsg = document.getElementById("ttsSettingsMsg");
+const ownerVoiceSelect = document.getElementById("ownerVoiceSelect");
+const ownerVoiceOverrideCheckbox = document.getElementById("ownerVoiceOverrideCheckbox");
+const ownerVolumeOverrideCheckbox = document.getElementById("ownerVolumeOverrideCheckbox");
+const ownerTtsSliders = document.getElementById("ownerTtsSliders");
 
 let ttsSlidersDirty = false;
 let ttsSlidersBuilt = false;
+let ownerTtsSlidersDirty = false;
+let ownerTtsSlidersBuilt = false;
+
+function buildTtsSliderGroup(container, specs, settings, dirty) {
+  container.innerHTML = specs.map((spec) => `
+    <div class="music-effect-slider-row" data-param-id="${spec.id}">
+      <label class="field-label">
+        <span>${escapeHtml(spec.label)}</span>
+        <span class="mono tts-slider-value">${settings[spec.id]}${spec.unit || ""}</span>
+      </label>
+      <input type="range" class="field-range tts-slider-input" min="${spec.min}" max="${spec.max}" step="${spec.step}" value="${settings[spec.id]}">
+    </div>
+  `).join("");
+  container.querySelectorAll(".tts-slider-input").forEach((input) => {
+    const specId = input.closest(".music-effect-slider-row").dataset.paramId;
+    const spec = specs.find((s) => s.id === specId);
+    input.addEventListener("pointerdown", () => { dirty.value = true; });
+    input.addEventListener("input", () => {
+      input.closest(".music-effect-slider-row").querySelector(".tts-slider-value").textContent = `${input.value}${spec.unit || ""}`;
+    });
+    input.addEventListener("change", () => {
+      dirty.value = false;
+      saveTtsSettings({ [specId]: Number(input.value) });
+    });
+  });
+}
+
+function refreshTtsSliderGroup(container, specs, settings) {
+  container.querySelectorAll(".music-effect-slider-row").forEach((row) => {
+    const spec = specs.find((s) => s.id === row.dataset.paramId);
+    if (!spec) return;
+    row.querySelector(".tts-slider-input").value = settings[spec.id];
+    row.querySelector(".tts-slider-value").textContent = `${settings[spec.id]}${spec.unit || ""}`;
+  });
+}
 
 async function loadTtsSettings() {
   const data = await api("/api/tts/settings");
@@ -940,41 +979,32 @@ async function loadTtsSettings() {
   ttsSettingsCard.style.display = "block";
 
   if (ttsVoiceSelect.options.length !== (data.voices || []).length) {
-    ttsVoiceSelect.innerHTML = data.voices.map((v) => `<option value="${v.slot}">${escapeHtml(v.label)}</option>`).join("");
+    const optionsHtml = data.voices.map((v) => `<option value="${v.slot}">${escapeHtml(v.label)}</option>`).join("");
+    ttsVoiceSelect.innerHTML = optionsHtml;
+    ownerVoiceSelect.innerHTML = optionsHtml;
   }
   ttsVoiceSelect.value = data.settings.voice_slot;
   ttsOnlyMeCheckbox.checked = !!data.settings.only_me;
+  ownerVoiceSelect.value = data.settings.owner_voice_slot;
+  ownerVoiceOverrideCheckbox.checked = !!data.settings.owner_voice_override;
+  ownerVolumeOverrideCheckbox.checked = !!data.settings.owner_volume_override;
 
   if (!ttsSlidersBuilt) {
-    ttsSliders.innerHTML = data.specs.map((spec) => `
-      <div class="music-effect-slider-row" data-param-id="${spec.id}">
-        <label class="field-label">
-          <span>${escapeHtml(spec.label)}</span>
-          <span class="mono tts-slider-value">${data.settings[spec.id]}${spec.unit || ""}</span>
-        </label>
-        <input type="range" class="field-range tts-slider-input" min="${spec.min}" max="${spec.max}" step="${spec.step}" value="${data.settings[spec.id]}">
-      </div>
-    `).join("");
-    ttsSliders.querySelectorAll(".tts-slider-input").forEach((input) => {
-      const specId = input.closest(".music-effect-slider-row").dataset.paramId;
-      const spec = data.specs.find((s) => s.id === specId);
-      input.addEventListener("pointerdown", () => { ttsSlidersDirty = true; });
-      input.addEventListener("input", () => {
-        input.closest(".music-effect-slider-row").querySelector(".tts-slider-value").textContent = `${input.value}${spec.unit || ""}`;
-      });
-      input.addEventListener("change", () => {
-        ttsSlidersDirty = false;
-        saveTtsSettings({ [specId]: Number(input.value) });
-      });
+    buildTtsSliderGroup(ttsSliders, data.specs, data.settings, {
+      set value(v) { ttsSlidersDirty = v; }, get value() { return ttsSlidersDirty; },
     });
     ttsSlidersBuilt = true;
   } else if (!ttsSlidersDirty) {
-    ttsSliders.querySelectorAll(".music-effect-slider-row").forEach((row) => {
-      const spec = data.specs.find((s) => s.id === row.dataset.paramId);
-      if (!spec) return;
-      row.querySelector(".tts-slider-input").value = data.settings[spec.id];
-      row.querySelector(".tts-slider-value").textContent = `${data.settings[spec.id]}${spec.unit || ""}`;
+    refreshTtsSliderGroup(ttsSliders, data.specs, data.settings);
+  }
+
+  if (!ownerTtsSlidersBuilt) {
+    buildTtsSliderGroup(ownerTtsSliders, data.owner_specs, data.settings, {
+      set value(v) { ownerTtsSlidersDirty = v; }, get value() { return ownerTtsSlidersDirty; },
     });
+    ownerTtsSlidersBuilt = true;
+  } else if (!ownerTtsSlidersDirty) {
+    refreshTtsSliderGroup(ownerTtsSliders, data.owner_specs, data.settings);
   }
 }
 
@@ -990,6 +1020,9 @@ async function saveTtsSettings(updates) {
 
 ttsVoiceSelect.addEventListener("change", () => saveTtsSettings({ voice_slot: Number(ttsVoiceSelect.value) }));
 ttsOnlyMeCheckbox.addEventListener("change", () => saveTtsSettings({ only_me: ttsOnlyMeCheckbox.checked }));
+ownerVoiceSelect.addEventListener("change", () => saveTtsSettings({ owner_voice_slot: Number(ownerVoiceSelect.value) }));
+ownerVoiceOverrideCheckbox.addEventListener("change", () => saveTtsSettings({ owner_voice_override: ownerVoiceOverrideCheckbox.checked }));
+ownerVolumeOverrideCheckbox.addEventListener("change", () => saveTtsSettings({ owner_volume_override: ownerVolumeOverrideCheckbox.checked }));
 
 // ---------- cmds tab ----------
 
