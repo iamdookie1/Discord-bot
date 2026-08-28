@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Voice Speaker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+<div class="app">
+  <header class="app-head">
+    <span class="app-brand-mark">&#9679;</span>
+    <h1>Voice Speaker</h1>
+    <p>Type something and this device says it out loud.</p>
+  </header>
+
+  <div class="card card-quiet" id="unavailableCard" style="display:none;">
+    <p id="unavailableMsg"></p>
+  </div>
+
+  <div class="card" id="mainCard">
+    <label class="field-label" for="textInput">Text</label>
+    <textarea id="textInput" class="field-input" rows="4" maxlength="2000" placeholder="Type what you want spoken out loud&hellip;"></textarea>
+    <p class="field-hint"><span id="charCount">0</span>/2000</p>
+
+    <div class="field-grid">
+      <div>
+        <label class="field-label" for="voiceSelect">Voice</label>
+        <select id="voiceSelect" class="field-input"></select>
+      </div>
+      <div>
+        <label class="field-label" for="effectSelect">Effect</label>
+        <select id="effectSelect" class="field-input"></select>
+      </div>
+    </div>
+
+    <div id="effectSliders" class="effect-sliders" style="display:none;"></div>
+
+    <div class="field-grid">
+      <div class="slider-row">
+        <label class="field-label"><span>Volume</span><span class="mono" id="volumeValue">100%</span></label>
+        <input type="range" class="field-range" id="volumeSlider" min="0" max="200" step="1" value="100">
+      </div>
+      <div class="slider-row">
+        <label class="field-label"><span>Speed</span><span class="mono" id="rateValue">175 wpm</span></label>
+        <input type="range" class="field-range" id="rateSlider" min="80" max="400" step="5" value="175">
+      </div>
+      <div class="slider-row">
+        <label class="field-label"><span>Tone</span><span class="mono" id="toneValue">5/10</span></label>
+        <input type="range" class="field-range" id="toneSlider" min="1" max="10" step="1" value="5">
+      </div>
+      <div class="slider-row">
+        <label class="field-label"><span>Pitch</span><span class="mono" id="pitchValue">+0</span></label>
+        <input type="range" class="field-range" id="pitchSlider" min="-100" max="100" step="5" value="0">
+      </div>
+    </div>
+
+    <div class="btn-row">
+      <button class="btn-primary" id="speakBtn">Speak</button>
+      <button class="btn-ghost" id="stopBtn" type="button">Stop</button>
+    </div>
+    <p class="form-msg" id="speakMsg"></p>
+  </div>
+</div>
+
+<script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>
