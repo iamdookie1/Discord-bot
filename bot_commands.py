@@ -1509,6 +1509,24 @@ async def handle_message(message: discord.Message, client: discord.Client):
     if name == "volume":
         await bot_tts.handle_volume(ctx)
         return
+    if name == "ttsrate":
+        await bot_tts.handle_rate(ctx)
+        return
+    if name == "myvoice":
+        await bot_tts.handle_my_voice(ctx)
+        return
+    if name == "myvolume":
+        await bot_tts.handle_my_volume(ctx)
+        return
+    if name == "ttsstatus":
+        await bot_tts.handle_status(ctx)
+        return
+    if name == "ttsreset":
+        await bot_tts.handle_reset(ctx)
+        return
+    if name == "ttstest":
+        await bot_tts.handle_test(ctx)
+        return
 
     is_builtin = name in BUILTIN_COMMANDS
     is_rp = (not is_builtin) and bot_rp.has_command(name)
