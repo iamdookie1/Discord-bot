@@ -24,7 +24,6 @@ _HAS_TERMUX_PLAYER = shutil.which("termux-media-player") is not None
 
 MAX_CHARS = 2000
 SYNTHESIZE_TIMEOUT = 30
-PLAY_STOP_TIMEOUT = 5
 
 # The same 20 hand-picked variants bot_tts.py offers, kept as their own
 # group in the UI since they're genuinely distinct-sounding (not just a
@@ -349,6 +348,17 @@ def play(path: str) -> bool:
 
 
 def stop():
-    """Stops whatever's currently playing, if anything."""
+    """Stops whatever's currently playing, if anything. Fire-and-forget
+    like play() — termux-media-player's CLI talks to the Termux:API app
+    over its own broadcast mechanism and can hang waiting on it (observed
+    in practice), so this deliberately doesn't block on or even check the
+    result; nothing here depends on stop actually having taken effect by
+    the time this returns."""
     if _HAS_TERMUX_PLAYER:
-        subprocess.run(["termux-media-player", "stop"], capture_output=True, timeout=PLAY_STOP_TIMEOUT)
+        try:
+            subprocess.Popen(
+                ["termux-media-player", "stop"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+        except OSError:
+            pass
