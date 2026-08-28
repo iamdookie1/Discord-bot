@@ -22,10 +22,14 @@ fi
 pkg update -y >/dev/null 2>&1 || true
 
 REQUIRED_PKGS=(python git libffi openssl)
-# Optional: only needed for !play/!join (music) and !tts (voice). A failure
-# here doesn't stop setup — the relevant command detects what's missing and
-# tells the user instead of crashing.
-OPTIONAL_PKGS=(ffmpeg libsodium pkg-config clang make espeak-ng)
+# Optional: only needed for !play/!join (music), !tts (voice), and the
+# standalone Voice Speaker app's playback (termux-api, for
+# termux-media-player). A failure here doesn't stop setup — the relevant
+# command/app detects what's missing and tells the user instead of
+# crashing. termux-api is the CLI half only — actually playing audio also
+# needs the separate Termux:API Android app (F-Droid/Play Store), which
+# this script can't install for you.
+OPTIONAL_PKGS=(ffmpeg libsodium pkg-config clang make espeak-ng termux-api)
 
 for p in "${REQUIRED_PKGS[@]}"; do
   if ! pkg list-installed 2>/dev/null | grep -q "^$p/"; then
@@ -42,4 +46,22 @@ for p in "${OPTIONAL_PKGS[@]}"; do
   fi
 done
 
-python run.py
+# Two separate apps live in this repo: the Discord bot (root), and the
+# standalone Voice Speaker (voicespeak/) — type text, this device reads it
+# aloud, no Discord connection involved. Pick one non-interactively with
+# `bash setup.sh bot` / `bash setup.sh voice`, or get prompted below.
+CHOICE="$1"
+if [ -z "$CHOICE" ]; then
+  echo "1) Discord bot"
+  echo "2) Voice speaker"
+  read -p "Choose [1/2]: " CHOICE
+fi
+
+case "$CHOICE" in
+  2|voice|voicespeak)
+    cd voicespeak && python run.py
+    ;;
+  *)
+    python run.py
+    ;;
+esac
