@@ -479,6 +479,23 @@
           </div>
         </div>
         <div id="ttsSliders" class="music-effect-sliders" style="display:block; margin-top:14px;"></div>
+
+        <div class="music-effect-sliders" style="display:flex; margin-top:14px;">
+          <p class="field-hint" style="margin:0;">Owner-only — how <em>your own</em> messages sound, on top of tone/pitch above.</p>
+
+          <label class="checkbox-row">
+            <input type="checkbox" id="ownerVoiceOverrideCheckbox">
+            <span>Use a different voice for me</span>
+          </label>
+          <select id="ownerVoiceSelect" class="field-input"></select>
+
+          <label class="checkbox-row">
+            <input type="checkbox" id="ownerVolumeOverrideCheckbox">
+            <span>Use a different volume for me</span>
+          </label>
+          <div id="ownerTtsSliders"></div>
+        </div>
+
         <p class="form-msg" id="ttsSettingsMsg"></p>
       </div>
     </section>
