@@ -46,6 +46,7 @@ tabs.forEach((tab) => {
       loadBotNamePlaceholder();
       loadPresence();
       loadTtsSettings();
+      refreshLeaveServerList();
     }
     if (tab.dataset.tab === "cmds") loadBuiltinCommands();
     if (tab.dataset.tab === "customcmds") loadCustomCommands();
@@ -918,6 +919,50 @@ setPresenceBtn.addEventListener("click", () => {
 clearPresenceBtn.addEventListener("click", () => {
   presenceText.value = "";
   savePresence(presenceType.value, "");
+});
+
+// ---------- bot tab: leave a server ----------
+
+const leaveServerSelect = document.getElementById("leaveServerSelect");
+const leaveServerBtn = document.getElementById("leaveServerBtn");
+const leaveServerMsg = document.getElementById("leaveServerMsg");
+
+async function refreshLeaveServerList() {
+  const guilds = await api("/api/guilds");
+  const current = leaveServerSelect.value;
+  if (!guilds.length) {
+    leaveServerSelect.innerHTML = '<option value="">No servers found (is the bot online + invited?)</option>';
+    return;
+  }
+  leaveServerSelect.innerHTML =
+    '<option value="">Choose a server&hellip;</option>' +
+    guilds.map((g) => `<option value="${g.id}">${escapeHtml(g.name)}</option>`).join("");
+  if (current) leaveServerSelect.value = current;
+}
+
+leaveServerBtn.addEventListener("click", async () => {
+  const guildId = leaveServerSelect.value;
+  if (!guildId) {
+    setMsg(leaveServerMsg, "Pick a server first.", "error");
+    return;
+  }
+  const serverName = leaveServerSelect.options[leaveServerSelect.selectedIndex].textContent;
+  if (!confirm(`Leave "${serverName}"? The bot will need to be re-invited to come back.`)) return;
+
+  leaveServerBtn.disabled = true;
+  const data = await api("/api/guilds/leave", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ guild_id: guildId }),
+  });
+  leaveServerBtn.disabled = false;
+
+  if (data.ok) {
+    setMsg(leaveServerMsg, `Left "${data.name}".`, "success");
+    refreshLeaveServerList();
+  } else {
+    setMsg(leaveServerMsg, data.error || "Couldn't leave that server.", "error");
+  }
 });
 
 // ---------- bot tab: tts voice settings ----------
