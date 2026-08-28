@@ -836,22 +836,26 @@ async def _crossfade_watch(guild: discord.Guild, voice_client: discord.VoiceClie
 
 
 async def _do_crossfade(guild: discord.Guild, voice_client: discord.VoiceClient, state: "GuildMusicState"):
-    # Same loop-mode requeue _play_next does for the track that's ending —
-    # done here too since crossfade bypasses _play_next entirely. Without
-    # this, loop mode would silently stop working the moment a crossfade
-    # happens instead of a hard cut (the just-played track just vanished
-    # instead of going back in the queue).
+    # Track loop repeats state.current directly — deliberately never
+    # touches state.queue (matching _play_next's track-loop handling), so
+    # the song already playing never shows up as "up next" in the queue.
+    # Queue loop genuinely does put the outgoing track back into rotation
+    # behind whatever else is queued, which is why it appends rather than
+    # bypassing the queue like track loop does.
     outgoing_track = state.current
-    if state.loop_mode == "track" and outgoing_track:
-        outgoing_track.pop("_prefetch", None)
-        state.queue.insert(0, outgoing_track)
-    elif state.loop_mode == "queue" and outgoing_track:
-        outgoing_track.pop("_prefetch", None)
-        state.queue.append(outgoing_track)
+    loop_track = state.loop_mode == "track" and outgoing_track is not None
 
-    if not state.queue:
-        return
-    next_track = state.queue[0]
+    if loop_track:
+        outgoing_track.pop("_prefetch", None)
+        next_track = outgoing_track
+    else:
+        if state.loop_mode == "queue" and outgoing_track:
+            outgoing_track.pop("_prefetch", None)
+            state.queue.append(outgoing_track)
+
+        if not state.queue:
+            return
+        next_track = state.queue[0]
 
     prefetch = next_track.get("_prefetch")
     if prefetch and prefetch.get("url") and (time.monotonic() - prefetch.get("at", 0)) < PREFETCH_MAX_AGE_SECONDS:
@@ -866,7 +870,12 @@ async def _do_crossfade(guild: discord.Guild, voice_client: discord.VoiceClient,
     # while we were awaiting extraction above — if the currently-live
     # source isn't the one we started this crossfade from, bail rather
     # than stomp on whatever's playing now.
-    if voice_client.source is not state.source or not state.queue or state.queue[0] is not next_track:
+    if voice_client.source is not state.source:
+        return
+    if loop_track:
+        if state.current is not outgoing_track:
+            return
+    elif not state.queue or state.queue[0] is not next_track:
         return
 
     next_track["url"] = fresh["url"]
@@ -893,7 +902,8 @@ async def _do_crossfade(guild: discord.Guild, voice_client: discord.VoiceClient,
     voice_client.source = mix
     state.source = mix
 
-    state.queue.pop(0)
+    if not loop_track:
+        state.queue.pop(0)
     next_track.pop("_prefetch", None)
     state.current = next_track
     _reset_position(state)
@@ -996,28 +1006,35 @@ async def _play_next(guild: discord.Guild, voice_client: discord.VoiceClient):
     _cancel_crossfade_task(state)  # whatever was scheduled for the track that just ended is stale now
 
     if state.loop_mode == "track" and state.current:
-        state.current.pop("_prefetch", None)
-        state.queue.insert(0, state.current)
-    elif state.loop_mode == "queue" and state.current:
-        state.current.pop("_prefetch", None)
-        state.queue.append(state.current)
+        # Repeats the current track directly — deliberately never touches
+        # state.queue, so a single-track repeat never shows the song
+        # that's already playing as "up next" in the queue.
+        track = state.current
+        track.pop("_prefetch", None)
+        prefetch = None
+        _cancel_idle_disconnect(state)
+    else:
+        if state.loop_mode == "queue" and state.current:
+            state.current.pop("_prefetch", None)
+            state.queue.append(state.current)
 
-    if not state.queue:
-        state.current = None
-        state.source = None
-        await _refresh_menu(guild, state)
-        _schedule_idle_disconnect(guild, voice_client)
-        return
+        if not state.queue:
+            state.current = None
+            state.source = None
+            await _refresh_menu(guild, state)
+            _schedule_idle_disconnect(guild, voice_client)
+            return
 
-    _cancel_idle_disconnect(state)
-    track = state.queue.pop(0)
+        _cancel_idle_disconnect(state)
+        track = state.queue.pop(0)
 
-    # A prefetch resolved while the previous track was still playing saves
-    # this from having to block on a fresh lookup at all. Otherwise (no
-    # prefetch, it failed, or it's stale enough to distrust) fall back to
-    # resolving right now — same reliability guarantee as before, just not
-    # always on the critical path anymore.
-    prefetch = track.pop("_prefetch", None)
+        # A prefetch resolved while the previous track was still playing saves
+        # this from having to block on a fresh lookup at all. Otherwise (no
+        # prefetch, it failed, or it's stale enough to distrust) fall back to
+        # resolving right now — same reliability guarantee as before, just not
+        # always on the critical path anymore.
+        prefetch = track.pop("_prefetch", None)
+
     if prefetch and prefetch.get("url") and (time.monotonic() - prefetch.get("at", 0)) < PREFETCH_MAX_AGE_SECONDS:
         fresh = prefetch
     else:
@@ -1029,6 +1046,11 @@ async def _play_next(guild: discord.Guild, voice_client: discord.VoiceClient):
                     await state.text_channel.send(f"Couldn't play **{track['title']}** — skipping.")
                 except discord.HTTPException:
                     pass
+            if state.loop_mode == "track":
+                # don't retry the same broken track forever — drop the
+                # repeat and fall through to whatever's actually queued.
+                state.loop_mode = "off"
+                state.current = None
             await _play_next(guild, voice_client)
             return
 
