@@ -17,7 +17,6 @@ see get_state_dict()/web_*() below, called from app.py.
 """
 import array
 import asyncio
-import difflib
 import json
 import os
 import re
@@ -278,44 +277,6 @@ EFFECT_SWAP_FADE_SECONDS = 0.2
 
 _SPOTIFY_TRACK_RE = re.compile(r"open\.spotify\.com/(?:intl-\w+/)?track/([A-Za-z0-9]+)")
 _SPOTIFY_OTHER_RE = re.compile(r"open\.spotify\.com/(?:intl-\w+/)?(album|playlist|artist)/([A-Za-z0-9]+)")
-
-# How many candidates a free-text search pulls back for us to rerank
-# ourselves (see _rank_search_entries) instead of blindly trusting
-# whichever result YouTube's own search ranks first — that ranking is
-# popularity-weighted, so a short/common query word ("dance") can easily
-# surface an unrelated viral compilation over the actually-requested song.
-SEARCH_CANDIDATES = 8
-_BY_ARTIST_RE = re.compile(r"^(.*\S)\s+by\s+(\S.*)$", re.IGNORECASE)
-_NON_WORD_RE = re.compile(r"[^\w\s]")
-
-
-def _normalize_for_match(text: str) -> str:
-    text = _NON_WORD_RE.sub(" ", (text or "").lower())
-    return " ".join(text.split())
-
-
-def _rank_search_entries(entries: list, query: str) -> list:
-    """Reorders search results by how well they actually match `query`,
-    instead of leaving YouTube's own (popularity-weighted) search order in
-    place. Splits "<title> by <artist>" style queries so the artist can be
-    checked against the uploader/channel name too — a much stronger signal
-    than title text alone, since official uploads are almost always
-    channeled under the artist's name."""
-    match = _BY_ARTIST_RE.match(query)
-    title_hint = _normalize_for_match(match.group(1) if match else query)
-    artist_hint = _normalize_for_match(match.group(2)) if match else ""
-
-    def score(entry: dict) -> float:
-        title = _normalize_for_match(entry.get("title") or "")
-        uploader = _normalize_for_match(entry.get("uploader") or entry.get("channel") or "")
-        s = difflib.SequenceMatcher(None, title_hint, title).ratio()
-        if title_hint and title_hint in title:
-            s += 0.3
-        if artist_hint and (artist_hint in uploader or artist_hint in title):
-            s += 0.4
-        return s
-
-    return sorted(entries, key=score, reverse=True)
 
 MENU_REFRESH_SECONDS = 5
 IDLE_DISCONNECT_SECONDS = 5 * 60
@@ -687,15 +648,8 @@ async def _extract(query: str, background: bool = False):
                 os.setpriority(os.PRIO_PROCESS, 0, PREFETCH_NICENESS)
             except (AttributeError, OSError):
                 pass  # not available on this platform — fine, just skip the deprioritization
-        # A direct link is passed through untouched; free text is turned
-        # into an explicit multi-result search so there's something to
-        # actually rerank below, instead of trusting YouTube's own (single-
-        # result, popularity-weighted) top hit for the raw query.
-        is_url = query.startswith(("http://", "https://"))
-        search_query = query if is_url else f"ytsearch{SEARCH_CANDIDATES}:{query}"
-
         with yt_dlp.YoutubeDL(YTDLP_OPTIONS) as ydl:
-            info = ydl.extract_info(search_query, download=False)
+            info = ydl.extract_info(query, download=False)
             if info and "entries" in info:
                 # A search can legitimately come back empty (typo, no
                 # matches, region-locked results all filtered out) — that's
@@ -703,7 +657,6 @@ async def _extract(query: str, background: bool = False):
                 entries = [e for e in (info.get("entries") or []) if e]
                 if not entries:
                     raise ValueError(f"No results found for “{query}”.")
-                entries = _rank_search_entries(entries, query)
                 info = entries[0]
             if not info or not info.get("url"):
                 raise ValueError(f"No results found for “{query}”.")
