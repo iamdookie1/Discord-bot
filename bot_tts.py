@@ -408,10 +408,11 @@ def maybe_enqueue(message: discord.Message):
 
 
 # ==================== owner commands ====================
-# !tone, !pitch, !onlytm, !voiceselection, !volume — dispatched specially
-# from bot_commands.handle_message() (like RP's !allowchannelrp), not
-# through TTS_COMMANDS below, so non-owners get silent no-ops and !cmds
-# never lists them.
+# !tone, !pitch, !onlytm, !voiceselection, !volume, !ttsrate, !myvoice,
+# !myvolume, !ttsstatus, !ttsreset, !ttstest — dispatched specially from
+# bot_commands.handle_message() (like RP's !allowchannelrp), not through
+# TTS_COMMANDS below, so non-owners get silent no-ops and !cmds never
+# lists them.
 
 def _voice_list_text(current_slot: int) -> str:
     lines = [
@@ -524,6 +525,157 @@ async def handle_volume(ctx):
         return
     _update_tts_setting("volume", value)
     await ctx.send(f"TTS volume set to **{value}** — applies to everyone.")
+
+
+async def handle_rate(ctx):
+    """!ttsrate <80-400> — speaking speed in words/minute, applies to
+    everyone (175 is espeak-ng's own default)."""
+    if ctx.author.id != OWNER_ID:
+        return
+    settings = _load_tts_settings()
+    if not ctx.args:
+        await ctx.send(f"Current TTS speed: **{settings['rate']}** wpm. Usage: `!ttsrate <80-400>` — applies to everyone (175 is normal).")
+        return
+    try:
+        value = int(ctx.args[0])
+    except ValueError:
+        await ctx.send("Speed must be a whole number from 80 to 400.")
+        return
+    if not (80 <= value <= 400):
+        await ctx.send("Speed must be between 80 and 400 (175 is normal).")
+        return
+    _update_tts_setting("rate", value)
+    await ctx.send(f"TTS speed set to **{value}** wpm — applies to everyone.")
+
+
+async def handle_my_voice(ctx):
+    """!myvoice <1-20|off> — use a different voice just for the owner's own
+    messages, layered on top of the base voice everyone else hears (set
+    with !voiceselection). Same list, same numbers."""
+    if ctx.author.id != OWNER_ID:
+        return
+    settings = _load_tts_settings()
+    if not ctx.args:
+        if settings.get("owner_voice_override"):
+            current = VOICE_SLOTS.get(settings["owner_voice_slot"], VOICE_SLOTS[1])
+            await ctx.send(
+                f"Using a different voice for you: **{current[1]}** (#{settings['owner_voice_slot']}). "
+                "Usage: `!myvoice <number>` or `!myvoice off`."
+            )
+        else:
+            await ctx.send("Not using a different voice for you right now — same as everyone. Usage: `!myvoice <number>` or `!myvoice off`.")
+        return
+    if ctx.args[0].lower() == "off":
+        _update_tts_setting("owner_voice_override", False)
+        await ctx.send("Back to the same voice as everyone else for your messages.")
+        return
+    try:
+        slot = int(ctx.args[0])
+    except ValueError:
+        await ctx.send("Pick a voice number, or `off` — run `!voiceselection` with no number to see the list.")
+        return
+    if slot not in VOICE_SLOTS:
+        await ctx.send(f"No voice #{slot}. Run `!voiceselection` with no number to see the list (1-{len(VOICE_SLOTS)}).")
+        return
+    settings["owner_voice_slot"] = slot
+    settings["owner_voice_override"] = True
+    _save_tts_settings(settings)
+    await ctx.send(f"Your messages will now sound like **{VOICE_SLOTS[slot][1]}** — everyone else still hears the normal voice.")
+
+
+async def handle_my_volume(ctx):
+    """!myvolume <0-500|off> — use a different volume just for the owner's
+    own messages, layered on top of the base volume everyone else hears."""
+    if ctx.author.id != OWNER_ID:
+        return
+    settings = _load_tts_settings()
+    if not ctx.args:
+        if settings.get("owner_volume_override"):
+            await ctx.send(f"Using a different volume for you: **{settings['owner_volume']}**. Usage: `!myvolume <0-500>` or `!myvolume off`.")
+        else:
+            await ctx.send("Not using a different volume for you right now — same as everyone. Usage: `!myvolume <0-500>` or `!myvolume off`.")
+        return
+    if ctx.args[0].lower() == "off":
+        _update_tts_setting("owner_volume_override", False)
+        await ctx.send("Back to the same volume as everyone else for your messages.")
+        return
+    try:
+        value = int(ctx.args[0])
+    except ValueError:
+        await ctx.send("Volume must be a whole number from 0 to 500, or `off`.")
+        return
+    if not (0 <= value <= 500):
+        await ctx.send("Volume must be between 0 and 500, or `off`.")
+        return
+    settings["owner_volume"] = value
+    settings["owner_volume_override"] = True
+    _save_tts_settings(settings)
+    await ctx.send(f"Your messages will now play at volume **{value}** — everyone else still hears the normal volume.")
+
+
+async def handle_status(ctx):
+    """!ttsstatus — every current TTS setting in one place, instead of
+    checking !tone/!pitch/!volume/etc one at a time."""
+    if ctx.author.id != OWNER_ID:
+        return
+    s = _load_tts_settings()
+    voice = VOICE_SLOTS.get(s["voice_slot"], VOICE_SLOTS[1])[1]
+    lines = [
+        f"Voice: **{voice}** (#{s['voice_slot']})",
+        f"Volume: **{s['volume']}**",
+        f"Speed: **{s['rate']}** wpm",
+        f"Tone (your messages only): **{s['tone']}**/10",
+        f"Pitch (your messages only): **{s['pitch']:+d}**",
+        f"Only-me mode: **{'on' if s['only_me'] else 'off'}**",
+    ]
+    if s.get("owner_voice_override"):
+        owner_voice = VOICE_SLOTS.get(s["owner_voice_slot"], VOICE_SLOTS[1])[1]
+        lines.append(f"Your voice override: **{owner_voice}** (#{s['owner_voice_slot']})")
+    if s.get("owner_volume_override"):
+        lines.append(f"Your volume override: **{s['owner_volume']}**")
+    await ctx.send("\n".join(lines))
+
+
+async def handle_reset(ctx):
+    """!ttsreset — resets every TTS setting (voice, volume, speed, tone,
+    pitch, only-me, and both owner-only overrides) back to default."""
+    if ctx.author.id != OWNER_ID:
+        return
+    _save_tts_settings(dict(_TTS_SETTINGS_DEFAULTS))
+    await ctx.send("All TTS settings reset to default.")
+
+
+class _SyntheticMessage:
+    """Just enough of a discord.Message's shape for sanitize_message()/the
+    worker to process — used by !ttstest to speak a preview phrase without
+    a real chat message existing."""
+
+    def __init__(self, author_id: int, content: str):
+        self.author = type("_Author", (), {"id": author_id, "bot": False})()
+        self.content = content
+        self.mentions = []
+        self.role_mentions = []
+
+
+async def handle_test(ctx):
+    """!ttstest — speaks a short test phrase right now, using your current
+    settings (including any !myvoice/!myvolume overrides), so you can
+    preview a change without waiting for a real message to trigger it."""
+    if ctx.author.id != OWNER_ID:
+        return
+    if not ctx.guild:
+        await ctx.send("This only works in a server.")
+        return
+    state = _states.get(ctx.guild.id)
+    if not state:
+        await ctx.send("TTS isn't on in this server — run `!tts` first.")
+        return
+    vc = ctx.guild.voice_client
+    test_message = _SyntheticMessage(OWNER_ID, "This is a test of your current text to speech settings.")
+    state.queue.put_front(test_message)
+    if vc and vc.is_playing():
+        vc.stop()
+    await ctx.send("Testing your current settings now.")
 
 
 # (description, handler, required_perm) — merged into bot_commands.BUILTIN_COMMANDS
