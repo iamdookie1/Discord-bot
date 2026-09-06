@@ -37,9 +37,13 @@ bash setup.sh
 
 `setup.sh` will:
 1. Pull the latest changes from GitHub (`git pull`) — skipped automatically if you're offline or aren't running from a git checkout
-2. Make sure the Termux system packages `python`, `git`, `libffi`, `openssl` are present (installs any that are missing)
+2. Make sure the Termux system packages `python`, `git`, `libffi`, `openssl` are present (installs any that are missing) — `pkg update` only actually runs if something's missing, not on every launch, so a repeat launch with everything already installed is fast
 3. Run `run.py`, which checks whether `flask` and `discord.py` are installed in Python and installs whichever are missing
 4. Start the server and print `http://127.0.0.1:5000`
+
+Each step prints a short `==>` line as it happens, so a launch never looks
+stuck with no feedback — even when nothing needs installing, you still see
+what's being checked.
 
 Every time after that, just run:
 

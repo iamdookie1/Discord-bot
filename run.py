@@ -13,6 +13,7 @@ import importlib
 import os
 import subprocess
 import sys
+import time
 
 # (import name, pip package name)
 # Core: the app can't run without these, so a failed install stops startup.
@@ -43,6 +44,17 @@ EXTRA_PACKAGES = [
     ("pyfiglet", "pyfiglet"),
 ]
 
+PIP_TIMEOUT_SECONDS = 30
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# yt-dlp gets re-checked for updates below regardless of whether it's
+# already installed (see check_and_install) — that's a real network round
+# trip every time, so it's throttled to once per this many seconds instead
+# of literally every launch, which is the more common case once you're
+# actively testing/restarting the bot.
+YT_DLP_CHECK_MARKER = os.path.join(BASE_DIR, ".yt_dlp_last_check")
+YT_DLP_CHECK_INTERVAL = 6 * 60 * 60
+
 
 def _missing(packages):
     missing = []
@@ -68,17 +80,32 @@ _PIP_ENV_OVERRIDES = {
 def _pip_install(pip_name):
     env = os.environ.copy()
     env.update(_PIP_ENV_OVERRIDES.get(pip_name, {}))
-    result = subprocess.run(
-        [sys.executable, "-m", "pip", "install", "--upgrade", pip_name],
-        check=False,
-        env=env,
-    )
+    args = [
+        sys.executable, "-m", "pip", "install", "--upgrade", "--quiet",
+        "--disable-pip-version-check", pip_name,
+    ]
+    try:
+        result = subprocess.run(args, check=False, env=env, timeout=PIP_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired:
+        print(f"  {pip_name}: timed out after {PIP_TIMEOUT_SECONDS}s — check your connection, continuing anyway.")
+        return False
     return result.returncode == 0
 
 
+def _yt_dlp_check_is_stale() -> bool:
+    try:
+        return (time.time() - os.path.getmtime(YT_DLP_CHECK_MARKER)) > YT_DLP_CHECK_INTERVAL
+    except OSError:
+        return True  # never checked before
+
+
 def check_and_install():
+    print("Checking Python packages...")
     missing_core = _missing(REQUIRED_PACKAGES)
     missing_extra = _missing(EXTRA_PACKAGES)
+
+    if missing_core or missing_extra:
+        print(f"  installing: {', '.join(missing_core + missing_extra)}")
 
     for pip_name in missing_core:
         if not _pip_install(pip_name):
@@ -98,10 +125,18 @@ def check_and_install():
     # yt-dlp breaks against YouTube regularly as YouTube changes its
     # anti-bot measures, and yt-dlp's own advice for "playback failed" /
     # 403 errors is almost always "update yt-dlp first" — so unlike the
-    # other extras, it's worth re-checking for a newer version on every
-    # startup instead of only installing it once and leaving it stale.
-    # (Harmless no-op if the loop above just installed it already.)
-    _pip_install("yt-dlp")
+    # other extras, it's worth re-checking for a newer version regularly
+    # instead of only installing it once and leaving it stale. Throttled
+    # to once per YT_DLP_CHECK_INTERVAL (see above) rather than literally
+    # every launch, since that's a real network round trip every time.
+    if _yt_dlp_check_is_stale():
+        print("Checking for yt-dlp updates...")
+        _pip_install("yt-dlp")
+        try:
+            with open(YT_DLP_CHECK_MARKER, "w"):
+                pass
+        except OSError:
+            pass
 
 
 def main():

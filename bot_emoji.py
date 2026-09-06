@@ -21,6 +21,8 @@ never lists them.
 """
 import io
 import re
+import sys
+import traceback
 
 import discord
 
@@ -55,11 +57,33 @@ async def _find_emoji(ctx) -> discord.PartialEmoji | None:
     return None
 
 
+async def _run_guarded(ctx, coro):
+    """Runs a handler body and guarantees *something* visible happens on
+    failure — both a reply in Discord and a traceback on stderr — instead
+    of a crash disappearing silently. discord.py's own default error
+    handler normally prints unhandled exceptions to stderr already, but a
+    guard here means a real failure is never mistakable for "nothing
+    happened", regardless of how the surrounding process is launched."""
+    try:
+        await coro
+    except Exception as exc:  # noqa: BLE001
+        print("Error in !copy/!copyp:", file=sys.stderr)
+        traceback.print_exc()
+        try:
+            await ctx.send(f"Something went wrong: {exc}")
+        except discord.HTTPException:
+            pass
+
+
 async def handle_copy(ctx):
     """!copy — reply to (or include) a message with a custom emoji and
     this reposts its actual image/GIF as a file in chat."""
     if ctx.author.id != OWNER_ID:
         return
+    await _run_guarded(ctx, _do_copy(ctx))
+
+
+async def _do_copy(ctx):
     emoji = await _find_emoji(ctx)
     if not emoji:
         await ctx.send("Couldn't find a custom emoji there — reply to a message with one, or include it in the command.")
@@ -82,6 +106,10 @@ async def handle_copy_paste(ctx):
     if not ctx.guild:
         await ctx.send("This only works in a server.")
         return
+    await _run_guarded(ctx, _do_copy_paste(ctx))
+
+
+async def _do_copy_paste(ctx):
     emoji = await _find_emoji(ctx)
     if not emoji:
         await ctx.send("Couldn't find a custom emoji there — reply to a message with one, or include it in the command.")
