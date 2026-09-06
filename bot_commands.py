@@ -1494,8 +1494,8 @@ async def handle_message(message: discord.Message, client: discord.Client):
         return
 
     # Same story for TTS's owner-only sound controls and bot_emoji's
-    # !copy/!copyp — hardcoded-owner-ID gated, silent no-op for anyone
-    # else, hidden from !cmds.
+    # !copy/!copyp/!addemoji — hardcoded-owner-ID gated, silent no-op for
+    # anyone else, hidden from !cmds.
     if name == "tone":
         await bot_tts.handle_tone(ctx)
         return
@@ -1534,6 +1534,9 @@ async def handle_message(message: discord.Message, client: discord.Client):
         return
     if name == "copyp":
         await bot_emoji.handle_copy_paste(ctx)
+        return
+    if name == "addemoji":
+        await bot_emoji.handle_add_emoji(ctx)
         return
 
     is_builtin = name in BUILTIN_COMMANDS
