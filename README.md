@@ -12,6 +12,7 @@ local web UI at `http://127.0.0.1:5000` instead of the command line.
 - `bot_commands.py` — utility + moderation `!commands`, on/off toggle storage, per-user command cooldowns, and the custom-command sandbox
 - `bot_music.py` — the `!join`/`!play`/`!menu`/... voice commands, the interactive now-playing menu, and playback state
 - `bot_rp.py` — the `!kiss`/`!hug`/... roleplay commands, their GIF storage, and the owner-gated channel lockdown
+- `bot_emoji.py` — the owner-only `!copy`/`!copyp` emoji-grabbing commands
 - `bot_tts.py` — `!tts`, which reads a text channel's messages aloud in voice via espeak-ng, plus 11 owner-only sound controls (`!tone`, `!pitch`, `!onlytm`, `!voiceselection`, `!volume`, `!ttsrate`, `!myvoice`, `!myvolume`, `!ttsstatus`, `!ttsreset`, `!ttstest`)
 - `owner.py` — the one hardcoded Discord user ID allowed to use owner-only commands (RP's channel lockdown, TTS's sound controls), shared so there's a single source of truth for it
 - `voice_owner.py` — tiny shared registry so music and TTS (only one voice connection per server) take turns instead of colliding
@@ -138,6 +139,10 @@ Open `http://127.0.0.1:5000` in your phone's browser. On a narrow screen the sid
 - Every one of them, built-in or custom, needs GIFs added before it'll do anything — hit **Edit** on any command (including the built-in ones) to set up to 10 of them. Each slot takes either a pasted URL or a file uploaded straight from your device (images/GIFs are kept as-is; a video gets its first 8 seconds converted to a GIF automatically, which needs the `ffmpeg` binary — `setup.sh` installs it for you). Uploaded files are stored locally in `rp_media/` and sent to Discord as a real file attachment (not a URL), since Discord's servers can't reach back into your phone to fetch one. Empty slots are ignored, extras past 10 are ignored, and the bot picks one at random each time the command runs. If none are set yet, using the command sends an error telling you to add some instead of failing silently.
 - The same **Edit** screen also lets you add up to 10 custom message templates, using `{author}` and `{target}` as placeholders (e.g. `{author} tackles {target} into a pile of leaves!`) — one is picked at random alongside the GIF. Leave them all blank to fall back to the default "`{author} verbs {target}!`" phrasing.
 - Each RP command has its own on/off toggle too; only custom ones can be deleted outright (built-ins can only be toggled off).
+
+**Emoji commands** — chat-only, no web UI, same owner-ID lockdown as the sound controls above:
+- `!copy` — reply to a message containing a custom emoji (or include the emoji right in the command) and it reposts that emoji's actual image/GIF as a file in chat. Works on animated (Nitro-style) emoji too — Nitro only gates who can *type* someone else's server emoji into a message, not whether the underlying image is fetchable, so the bot can always grab it regardless of who's allowed to use it.
+- `!copyp` — same lookup as `!copy`, but instead of reposting the image, adds it as a real custom emoji to the server the command was used in. Needs the bot to have the **Manage Expressions** permission there; a clear error explains what's missing instead of failing silently.
 
 **Backup tab** — web UI only, nothing here is a chat command:
 - Pick a **server**, hit **Save backup** to snapshot its roles, categories, and channels (names, colors/permissions, per-role permission overwrites, channel type/topic/slowmode/bitrate/etc). Message history, pins, threads, and anything else *inside* a channel is never captured.
