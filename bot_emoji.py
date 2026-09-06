@@ -53,7 +53,13 @@ async def _find_emoji(ctx) -> discord.PartialEmoji | None:
         match = _EMOJI_RE.search(text or "")
         if match:
             animated, name, emoji_id = match.groups()
-            return discord.PartialEmoji(name=name, animated=bool(animated), id=int(emoji_id))
+            emoji = discord.PartialEmoji(name=name, animated=bool(animated), id=int(emoji_id))
+            # A manually-built PartialEmoji has no ConnectionState attached,
+            # so .read() fails with "Invalid state (no ConnectionState
+            # provided)" — it needs the client's internal state wired in by
+            # hand, same as PartialEmoji.from_str(..., client=...) does.
+            emoji._state = ctx.client._connection
+            return emoji
     return None
 
 
