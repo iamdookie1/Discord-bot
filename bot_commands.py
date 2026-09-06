@@ -39,6 +39,7 @@ from collections import namedtuple
 
 import discord
 
+import bot_emoji
 import bot_music
 import bot_rp
 import bot_tts
@@ -1492,8 +1493,9 @@ async def handle_message(message: discord.Message, client: discord.Client):
         await bot_rp.handle_list_command(ctx)
         return
 
-    # Same story for TTS's owner-only sound controls — hardcoded-owner-ID
-    # gated, silent no-op for anyone else, hidden from !cmds.
+    # Same story for TTS's owner-only sound controls and bot_emoji's
+    # !copy/!copyp — hardcoded-owner-ID gated, silent no-op for anyone
+    # else, hidden from !cmds.
     if name == "tone":
         await bot_tts.handle_tone(ctx)
         return
@@ -1526,6 +1528,12 @@ async def handle_message(message: discord.Message, client: discord.Client):
         return
     if name == "ttstest":
         await bot_tts.handle_test(ctx)
+        return
+    if name == "copy":
+        await bot_emoji.handle_copy(ctx)
+        return
+    if name == "copyp":
+        await bot_emoji.handle_copy_paste(ctx)
         return
 
     is_builtin = name in BUILTIN_COMMANDS
