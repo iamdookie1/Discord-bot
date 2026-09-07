@@ -368,6 +368,7 @@ class GuildMusicState:
         self.pending_restart = None    # {"track":, "elapsed":} set when restarting the current track
         self.crossfade_seconds = 0.0   # 0 disables it — see _schedule_crossfade
         self.crossfade_task = None     # asyncio.Task counting down to the next crossfade
+        self.stay_mode = False         # !stayv — suppresses idle auto-disconnect until !leave
 
 
 _states: dict[int, GuildMusicState] = {}
@@ -612,11 +613,13 @@ def _cancel_idle_disconnect(state: GuildMusicState):
 def _schedule_idle_disconnect(guild: discord.Guild, voice_client: discord.VoiceClient):
     state = _state(guild.id)
     _cancel_idle_disconnect(state)
+    if state.stay_mode:
+        return  # !stayv is active — stick around regardless of inactivity
 
     async def _watch():
         try:
             await asyncio.sleep(IDLE_DISCONNECT_SECONDS)
-            if state.current is None and guild.voice_client:
+            if state.current is None and not state.stay_mode and guild.voice_client:
                 await guild.voice_client.disconnect(force=True)
                 voice_owner.release(guild.id)
                 _cancel_refresh_task(state)
@@ -1199,6 +1202,34 @@ async def _cmd_join(ctx):
     await ctx.send(f"Joined **{channel.name}**.")
 
 
+async def _cmd_stay(ctx):
+    """!stayv — joins the caller's current voice channel and stays there
+    indefinitely (suppresses the usual 5-minute inactivity auto-disconnect)
+    until manually removed with !leave."""
+    reason = _unavailable_reason()
+    if reason:
+        await ctx.send(reason)
+        return
+    if not ctx.guild:
+        await ctx.send("This only works in a server.")
+        return
+    author_voice = getattr(ctx.author, "voice", None)
+    if not author_voice or not author_voice.channel:
+        await ctx.send("Join a voice channel first, then use `!stayv`.")
+        return
+    channel = author_voice.channel
+
+    state = _state(ctx.guild.id)
+    if ctx.guild.voice_client:
+        await ctx.guild.voice_client.move_to(channel)
+    else:
+        await channel.connect()
+        voice_owner.claim(ctx.guild.id, "music")
+    state.stay_mode = True
+    _cancel_idle_disconnect(state)
+    await ctx.send(f"Staying in **{channel.name}** until told to leave with `!leave`.")
+
+
 async def _cmd_leave(ctx):
     state = _state(ctx.guild.id) if ctx.guild else None
     if ctx.guild and ctx.guild.voice_client:
@@ -1212,6 +1243,7 @@ async def _cmd_leave(ctx):
             state.current = None
             state.source = None
             state.loop_mode = "off"
+            state.stay_mode = False
             _cancel_refresh_task(state)
             _cancel_idle_disconnect(state)
             state.menu_message = None
@@ -1340,6 +1372,7 @@ async def _cmd_queue(ctx):
 # (description, handler, required_perm) — merged into bot_commands.BUILTIN_COMMANDS
 MUSIC_COMMANDS = {
     "join": ("Joins the server's configured music voice channel.", _cmd_join, None),
+    "stayv": ("Joins your current voice channel and stays there indefinitely until !leave.", _cmd_stay, None),
     "leave": ("Leaves the voice channel.", _cmd_leave, None),
     "play": ("Plays a song by name (optionally \"by <artist>\"), YouTube link, or Spotify track link — queues if already playing.", _cmd_play, None),
     "menu": ("Shows the interactive now-playing menu.", _cmd_menu, None),
