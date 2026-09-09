@@ -59,6 +59,7 @@ tabs.forEach((tab) => {
     if (tab.dataset.tab === "channels") refreshChanServers();
     if (tab.dataset.tab === "categories") refreshCatServers();
     if (tab.dataset.tab === "fonts" && !fontsInitialized) initFontsTab();
+    if (tab.dataset.tab === "servers") loadServerList();
     closeMobileNav();
   });
 });
@@ -2552,6 +2553,50 @@ function renderSymbolGrid(containerId, items) {
     });
   });
 }
+
+// ---------- servers tab ----------
+
+const serverList = document.getElementById("serverList");
+const serverListEmpty = document.getElementById("serverListEmpty");
+const refreshServersBtn = document.getElementById("refreshServersBtn");
+
+async function loadServerList() {
+  serverListEmpty.textContent = "Loading…";
+  serverListEmpty.style.display = "block";
+  serverList.innerHTML = "";
+
+  const guilds = await api("/api/servers");
+  if (!guilds.length) {
+    serverListEmpty.textContent = "No servers found (is the bot online + invited?)";
+    return;
+  }
+  serverListEmpty.style.display = "none";
+
+  serverList.innerHTML = guilds.map((g) => `
+    <div class="mod-list-item">
+      ${g.icon_url
+        ? `<img src="${g.icon_url}" alt="" width="40" height="40" style="border-radius:50%;flex-shrink:0;">`
+        : `<span style="width:40px;height:40px;border-radius:50%;background:var(--surface-2,#2a2a33);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-weight:600;">${escapeHtml(g.name.slice(0, 1).toUpperCase())}</span>`
+      }
+      <div class="mod-list-info">
+        <span class="mod-list-name">${escapeHtml(g.name)}</span>
+        <span class="mod-list-sub">${g.member_count ?? "?"} members &middot; ${g.id}</span>
+        ${g.invite_url
+          ? `<input class="field-input mono" readonly value="${escapeHtml(g.invite_url)}" onclick="this.select()" style="margin-top:6px;">`
+          : `<span class="mod-list-sub">No invite available &mdash; the bot has no channel here it can create invites from.</span>`
+        }
+      </div>
+      <div class="mod-list-actions">
+        ${g.invite_url ? `<button type="button" class="btn-outline btn-small server-copy-btn" data-invite="${escapeHtml(g.invite_url)}">Copy</button>` : ""}
+      </div>
+    </div>`).join("");
+
+  serverList.querySelectorAll(".server-copy-btn").forEach((btn) => {
+    btn.addEventListener("click", () => copyToClipboard(btn.dataset.invite, null));
+  });
+}
+
+refreshServersBtn.addEventListener("click", loadServerList);
 
 function initFontsTab() {
   fontsInitialized = true;

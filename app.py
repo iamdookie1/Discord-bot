@@ -97,6 +97,13 @@ def guilds():
     return jsonify(bot_manager.get_guilds())
 
 
+@app.route("/api/servers")
+def servers():
+    """Backs the Servers tab: every server the bot is in, with its member
+    count and a reusable invite link."""
+    return jsonify(bot_manager.get_guilds_detailed())
+
+
 @app.route("/api/guilds/leave", methods=["POST"])
 def leave_guild():
     data = request.get_json(force=True, silent=True) or {}
