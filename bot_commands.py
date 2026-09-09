@@ -43,6 +43,7 @@ import bot_emoji
 import bot_music
 import bot_rp
 import bot_sounds
+import bot_stickers
 import bot_tts
 import guild_settings
 import voice_owner
@@ -1495,8 +1496,9 @@ async def handle_message(message: discord.Message, client: discord.Client):
         return
 
     # Same story for TTS's owner-only sound controls, bot_emoji's !copy/
-    # !copyp/!addemoji, and bot_sounds' !addsound — hardcoded-owner-ID
-    # gated, silent no-op for anyone else, hidden from !cmds.
+    # !copyp/!addemoji, bot_sounds' !addsound, and bot_stickers' !as —
+    # hardcoded-owner-ID gated, silent no-op for anyone else, hidden from
+    # !cmds.
     if name == "tone":
         await bot_tts.handle_tone(ctx)
         return
@@ -1541,6 +1543,9 @@ async def handle_message(message: discord.Message, client: discord.Client):
         return
     if name == "addsound":
         await bot_sounds.handle_add_sound(ctx)
+        return
+    if name == "as":
+        await bot_stickers.handle_add_sticker(ctx)
         return
 
     is_builtin = name in BUILTIN_COMMANDS
