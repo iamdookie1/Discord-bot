@@ -246,5 +246,28 @@ async def _do_add_sticker(ctx):
     except discord.HTTPException as exc:
         await ctx.send(f"Discord rejected that: {exc.text}")
         return
+
     kind = "animated" if animated else "static"
-    await ctx.send(f"Added the {kind} sticker **{created.name}** to this server.")
+    if created.available:
+        await ctx.send(f"Added the {kind} sticker **{created.name}** to this server.")
+        return
+
+    # Discord accepts the upload either way, but a newly-created sticker
+    # can come back available=False — most commonly because the server
+    # hasn't got any Boosts yet (custom stickers need Boost Level 1+ to
+    # actually be usable, unlike custom emoji). It'll show up in Server
+    # Settings > Stickers regardless, which is what makes this look like
+    # a silent success at first.
+    if ctx.guild.premium_tier < 1:
+        await ctx.send(
+            f"Added the {kind} sticker **{created.name}**, but it won't show up in the sticker "
+            "picker yet — Discord only lets custom stickers actually be used once a server reaches "
+            "**Boost Level 1**. It'll start working on its own once this server gets its first "
+            "boost; there's nothing more to do on the bot's end."
+        )
+    else:
+        await ctx.send(
+            f"Added the {kind} sticker **{created.name}**, but Discord marked it unavailable for "
+            "use right now (not a boost issue, since this server's already boosted) — it may still "
+            "be going through Discord's review, or was disabled on Discord's end."
+        )

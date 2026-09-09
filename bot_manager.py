@@ -113,6 +113,42 @@ class BotManager:
             return []
         return [{"id": str(g.id), "name": g.name} for g in self.client.guilds]
 
+    def get_guilds_detailed(self):
+        """Every server the bot is in, plus a reusable invite link for the
+        Servers tab — created (or reused, via unique=False) from the first
+        text channel the bot can actually invite people into. invite_url
+        is None for a server with no such channel (e.g. no permission
+        anywhere)."""
+        if not (self.client and self.status == "online"):
+            return []
+
+        async def _one(guild):
+            invite_url = None
+            for channel in guild.text_channels:
+                if not channel.permissions_for(guild.me).create_instant_invite:
+                    continue
+                try:
+                    invite = await channel.create_invite(
+                        max_age=0, max_uses=0, unique=False,
+                        reason="Servers tab (web control panel)",
+                    )
+                except discord.HTTPException:
+                    continue
+                invite_url = invite.url
+                break
+            return {
+                "id": str(guild.id),
+                "name": guild.name,
+                "icon_url": guild.icon.url if guild.icon else None,
+                "member_count": guild.member_count,
+                "invite_url": invite_url,
+            }
+
+        async def _all():
+            return await asyncio.gather(*(_one(g) for g in self.client.guilds))
+
+        return self._run_coro(_all(), default=[])
+
     def get_text_channels(self, guild_id: str):
         if not (self.client and self.status == "online"):
             return []
