@@ -40,6 +40,7 @@ from collections import namedtuple
 import discord
 
 import bot_emoji
+import bot_layout
 import bot_music
 import bot_rp
 import bot_sounds
@@ -47,6 +48,7 @@ import bot_stickers
 import bot_tts
 import guild_settings
 import voice_owner
+from theme import EMBED_COLOR
 
 # Optional: only needed for !qr / !ascii. Both are pure-Python (no native
 # build step, so they install cleanly on Termux), and the commands tell
@@ -143,10 +145,6 @@ def _resolve_role(ctx: Ctx, text: str):
     return discord.utils.find(lambda r: r.name.lower() == text.lower(), ctx.guild.roles)
 
 
-# Shared brand color for embeds — matches the web UI's --accent.
-EMBED_COLOR = discord.Color(0xFFB454)
-
-
 def _embed(*, title=None, description=None, **kwargs) -> discord.Embed:
     return discord.Embed(title=title, description=description, color=EMBED_COLOR, **kwargs)
 
@@ -157,15 +155,92 @@ async def _cmd_ping(ctx: Ctx):
     await ctx.send(f"Pong! `{round(ctx.client.latency * 1000)}ms`")
 
 
-async def _cmd_cmds(ctx: Ctx):
-    by_category = {}
+_CATEGORY_META = {
+    "utility": ("🧰", "Utility", "Everyday tools and info."),
+    "moderation": ("🛡️", "Moderation", "Permission-gated — checks your Discord perms first."),
+    "layout": ("🧱", "Layout", "Rearrange channels & categories. `!layout` opens the interactive editor."),
+    "music": ("🎵", "Music", "Voice playback. Needs a music channel set in the web UI."),
+    "tts": ("🗣️", "TTS", "Reads a text channel aloud in voice."),
+    "custom": ("⚙️", "Custom", "Commands added from the web UI."),
+}
+
+
+def _help_pages() -> dict:
+    pages = {}
     for name, spec in BUILTIN_COMMANDS.items():
-        by_category.setdefault(spec.category, []).append(name)
-    lines = [f"**{cat.title()}:** " + ", ".join(f"!{n}" for n in sorted(names)) for cat, names in by_category.items()]
-    custom = load_custom_commands()
+        if is_builtin_enabled(name):
+            pages.setdefault(spec.category, []).append((name, spec.description))
+    custom = {n: e for n, e in load_custom_commands().items() if e.get("enabled", True)}
     if custom:
-        lines.append("**Custom:** " + ", ".join(f"!{n}" for n in custom))
-    await ctx.send("\n".join(lines))
+        pages["custom"] = [(n, e.get("description") or "Custom command.") for n, e in custom.items()]
+    return {cat: sorted(items) for cat, items in pages.items()}
+
+
+def _help_embed(pages: dict, category: str | None) -> discord.Embed:
+    if category is None:
+        embed = _embed(title="◼ Command deck", description=f"Prefix `{COMMAND_PREFIX}` · pick a category below.")
+        for cat, items in pages.items():
+            emoji, label, blurb = _CATEGORY_META.get(cat, ("•", cat.title(), ""))
+            embed.add_field(name=f"{emoji} {label} · {len(items)}", value=blurb or "\u200b", inline=False)
+        embed.set_footer(text=f"{sum(len(v) for v in pages.values())} commands · 3s cooldown per command")
+        return embed
+    emoji, label, blurb = _CATEGORY_META.get(category, ("•", category.title(), ""))
+    body = "\n".join(f"`{COMMAND_PREFIX}{n}` — {d}" for n, d in pages.get(category, []))
+    if len(body) > 4000:
+        body = body[:3990].rsplit("\n", 1)[0] + "\n…"
+    embed = _embed(title=f"{emoji} {label}", description=(f"*{blurb}*\n\n" if blurb else "") + body)
+    return embed
+
+
+class _HelpView(discord.ui.View):
+    def __init__(self, pages: dict, author_id: int):
+        super().__init__(timeout=180)
+        self.pages = pages
+        self.author_id = author_id
+        options = [discord.SelectOption(label="Overview", value="__overview", emoji="📚")]
+        for cat in pages:
+            emoji, label, _ = _CATEGORY_META.get(cat, ("•", cat.title(), ""))
+            options.append(discord.SelectOption(label=f"{label} ({len(pages[cat])})", value=cat, emoji=emoji))
+        select = discord.ui.Select(placeholder="Browse a category…", options=options[:25])
+        select.callback = self._on_select
+        self.add_item(select)
+        self.message = None
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message(embed=_help_embed(self.pages, interaction.data["values"][0]
+                                                                      if interaction.data["values"][0] != "__overview" else None),
+                                                    ephemeral=True)
+            return False
+        return True
+
+    async def _on_select(self, interaction: discord.Interaction):
+        value = interaction.data["values"][0]
+        await interaction.response.edit_message(embed=_help_embed(self.pages, None if value == "__overview" else value), view=self)
+
+    async def on_timeout(self):
+        if self.message:
+            try:
+                await self.message.edit(view=None)
+            except discord.HTTPException:
+                pass
+
+
+async def _cmd_cmds(ctx: Ctx):
+    pages = _help_pages()
+    wanted = ctx.args[0].lower() if ctx.args else None
+    if wanted and wanted.lstrip(COMMAND_PREFIX) in BUILTIN_COMMANDS:
+        name = wanted.lstrip(COMMAND_PREFIX)
+        spec = BUILTIN_COMMANDS[name]
+        embed = _embed(title=f"{COMMAND_PREFIX}{name}", description=spec.description)
+        if spec.required_perm:
+            embed.add_field(name="Needs", value=PERM_LABELS.get(spec.required_perm, spec.required_perm))
+        embed.add_field(name="Category", value=_CATEGORY_META.get(spec.category, ("", spec.category.title()))[1])
+        await ctx.send(embed=embed)
+        return
+    category = wanted if wanted in pages else None
+    view = _HelpView(pages, ctx.author.id)
+    view.message = await ctx.send(embed=_help_embed(pages, category), view=view)
 
 
 async def _cmd_uptime(ctx: Ctx):
@@ -1305,6 +1380,8 @@ for _name, (_desc, _handler, _perm) in bot_music.MUSIC_COMMANDS.items():
     BUILTIN_COMMANDS[_name] = CommandSpec(_desc, _handler, _perm, "music")
 for _name, (_desc, _handler, _perm) in bot_tts.TTS_COMMANDS.items():
     BUILTIN_COMMANDS[_name] = CommandSpec(_desc, _handler, _perm, "tts")
+for _name, (_desc, _handler, _perm) in bot_layout.LAYOUT_COMMANDS.items():
+    BUILTIN_COMMANDS[_name] = CommandSpec(_desc, _handler, _perm, "layout")
 
 
 def name_taken(name: str) -> bool:

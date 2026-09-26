@@ -707,12 +707,42 @@ def roles_delete():
 
 # ---------------- channels & categories ----------------
 
-@app.route("/api/channels_full", methods=["GET"])
-def channels_full():
+@app.route("/api/layout", methods=["GET"])
+def layout_get():
     guild_id = request.args.get("guild_id", "")
     if not guild_id:
-        return jsonify({"categories": [], "channels": []})
-    return jsonify(bot_manager.list_channels_full(guild_id))
+        return jsonify({"groups": []})
+    return jsonify(bot_manager.get_layout(guild_id))
+
+
+@app.route("/api/layout", methods=["POST"])
+def layout_apply():
+    data = request.get_json(force=True, silent=True) or {}
+    guild_id = data.get("guild_id", "")
+    groups = data.get("groups")
+
+    if bot_manager.status != "online":
+        return jsonify({"ok": False, "error": "Bot isn't connected yet."}), 400
+    if not guild_id or not isinstance(groups, list):
+        return jsonify({"ok": False, "error": "Pick a server first."}), 400
+
+    result = bot_manager.apply_layout(guild_id, groups, data.get("sync_ids") or [])
+    return jsonify(result), (200 if result.get("ok") else 400)
+
+
+@app.route("/api/channels/clone", methods=["POST"])
+def channels_clone():
+    data = request.get_json(force=True, silent=True) or {}
+    guild_id = data.get("guild_id", "")
+    channel_id = data.get("channel_id", "")
+
+    if bot_manager.status != "online":
+        return jsonify({"ok": False, "error": "Bot isn't connected yet."}), 400
+    if not (guild_id and channel_id):
+        return jsonify({"ok": False, "error": "Pick a server and a channel."}), 400
+
+    result = bot_manager.clone_channel(guild_id, channel_id)
+    return jsonify(result), (200 if result.get("ok") else 400)
 
 
 @app.route("/api/channels", methods=["POST"])
@@ -727,7 +757,7 @@ def channels_create():
         return jsonify({"ok": False, "error": "Bot isn't connected yet."}), 400
     if not (guild_id and name):
         return jsonify({"ok": False, "error": "Pick a server and enter a name."}), 400
-    if channel_type not in ("text", "voice", "category"):
+    if channel_type not in ("text", "voice", "category", "stage", "forum"):
         return jsonify({"ok": False, "error": "Unknown channel type."}), 400
 
     result = bot_manager.create_channel(guild_id, name, channel_type, category_id=category_id)

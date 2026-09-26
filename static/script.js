@@ -56,8 +56,7 @@ tabs.forEach((tab) => {
       loadBackupList();
     }
     if (tab.dataset.tab === "mod") refreshModServers();
-    if (tab.dataset.tab === "channels") refreshChanServers();
-    if (tab.dataset.tab === "categories") refreshCatServers();
+    if (tab.dataset.tab === "layout") layoutEditor.open();
     if (tab.dataset.tab === "fonts" && !fontsInitialized) initFontsTab();
     if (tab.dataset.tab === "servers") loadServerList();
     closeMobileNav();
@@ -1153,6 +1152,7 @@ ownerEffectSelect.addEventListener("change", async () => {
 const utilityCmdList = document.getElementById("utilityCmdList");
 const moderationCmdList = document.getElementById("moderationCmdList");
 const ttsCmdList = document.getElementById("ttsCmdList");
+const layoutCmdList = document.getElementById("layoutCmdList");
 const musicCmdList = document.getElementById("musicCmdList");
 
 function renderToggle(name, enabled, onToggle) {
@@ -1201,7 +1201,7 @@ function renderBuiltinCmdItem(c) {
 
 async function loadBuiltinCommands() {
   const cmds = await api("/api/commands/builtin");
-  const byCategory = { utility: [], moderation: [], music: [], tts: [] };
+  const byCategory = { utility: [], moderation: [], layout: [], music: [], tts: [] };
   cmds.forEach((c) => { (byCategory[c.category] || byCategory.utility).push(c); });
 
   const fill = (el, list) => {
@@ -1212,6 +1212,7 @@ async function loadBuiltinCommands() {
   fill(moderationCmdList, byCategory.moderation);
   fill(musicCmdList, byCategory.music);
   fill(ttsCmdList, byCategory.tts);
+  fill(layoutCmdList, byCategory.layout);
   filterBuiltinCommands();
 }
 
@@ -2144,217 +2145,819 @@ document.getElementById("modPurgeUserBtn").addEventListener("click", async () =>
   setMsg(modChannelMsg, data.ok ? `Deleted ${data.deleted} message(s).` : (data.error || "Couldn't do that."), data.ok ? "success" : "error");
 });
 
-// ---------- channels tab ----------
+// ---------- toasts ----------
 
-const chanServerSelect = document.getElementById("chanServerSelect");
-const chanNameInput = document.getElementById("chanNameInput");
-const chanTypeSelect = document.getElementById("chanTypeSelect");
-const chanCategorySelect = document.getElementById("chanCategorySelect");
-const chanCreateMsg = document.getElementById("chanCreateMsg");
-const chanList = document.getElementById("chanList");
+const toastStack = document.getElementById("toastStack");
 
-async function refreshChanServers() {
-  const guilds = await api("/api/guilds");
-  const current = chanServerSelect.value;
-  if (!guilds.length) {
-    chanServerSelect.innerHTML = '<option value="">No servers found (is the bot online + invited?)</option>';
-    return;
-  }
-  chanServerSelect.innerHTML =
-    '<option value="">Choose a server&hellip;</option>' +
-    guilds.map((g) => `<option value="${g.id}">${escapeHtml(g.name)}</option>`).join("");
-  if (current) chanServerSelect.value = current;
-  await refreshChanData();
+function toast(text, kind) {
+  const el = document.createElement("div");
+  el.className = "toast" + (kind ? ` is-${kind}` : "");
+  el.textContent = text;
+  toastStack.appendChild(el);
+  setTimeout(() => el.remove(), kind === "error" ? 6000 : 2600);
 }
 
-async function refreshChanData() {
-  const guildId = chanServerSelect.value;
-  if (!guildId) {
-    chanCategorySelect.innerHTML = '<option value="">None</option>';
-    chanList.innerHTML = "";
-    return;
+function prefGet(key, fallback) {
+  try {
+    const v = localStorage.getItem(`cd.${key}`);
+    return v === null ? fallback : JSON.parse(v);
+  } catch (_) {
+    return fallback;
   }
-  const data = await api(`/api/channels_full?guild_id=${encodeURIComponent(guildId)}`);
-  const categoryOptions = data.categories.map((c) => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join("");
-  chanCategorySelect.innerHTML = '<option value="">None</option>' + categoryOptions;
+}
 
-  if (!data.channels.length) {
-    chanList.innerHTML = '<p class="mod-list-empty">No channels found.</p>';
-    return;
+function prefSet(key, value) {
+  try { localStorage.setItem(`cd.${key}`, JSON.stringify(value)); } catch (_) { /* private mode */ }
+}
+
+// ---------- layout tab (channels + categories) ----------
+//
+// Keeps the server's whole layout as a local model:
+//   groups = [{ id: null, channels: [...] }, { id, name, channels: [...] }, ...]
+// (uncategorized first, like Discord draws it). Every move is a plain edit
+// of that model followed by a re-render; saving sends the whole thing to
+// /api/layout, which writes it back in ONE bulk request.
+
+const layoutEditor = (() => {
+  const $ = (id) => document.getElementById(id);
+  const el = {
+    server: $("layoutServerSelect"),
+    reload: $("layoutReloadBtn"),
+    tree: $("layoutTree"),
+    newName: $("layoutNewName"),
+    newType: $("layoutNewType"),
+    newCat: $("layoutNewCategory"),
+    createBtn: $("layoutCreateBtn"),
+    filter: $("layoutFilter"),
+    autoSave: $("layoutAutoSave"),
+    collapseBtn: $("layoutCollapseBtn"),
+    actionBar: $("layoutActionBar"),
+    selLabel: $("layoutSelLabel"),
+    moveTo: $("layoutMoveTo"),
+    syncBtn: $("layoutSyncBtn"),
+    renameBtn: $("layoutRenameBtn"),
+    cloneBtn: $("layoutCloneBtn"),
+    deleteBtn: $("layoutDeleteBtn"),
+    saveBar: $("layoutSaveBar"),
+    saveLabel: $("layoutSaveLabel"),
+    sortBtn: $("layoutSortBtn"),
+    discardBtn: $("layoutDiscardBtn"),
+    saveBtn: $("layoutSaveBtn"),
+  };
+
+  const svg = (d, size = 16) => `<svg viewBox="0 0 24 24" width="${size}" height="${size}" aria-hidden="true"><path fill="currentColor" d="${d}"/></svg>`;
+  const ICONS = {
+    text: svg("M10 3 9 8H5v2h3.6l-.8 4H4v2h3.4l-1 5h2l1-5h4l-1 5h2l1-5H20v-2h-4.2l.8-4H20V8h-3.6l1-5h-2l-1 5h-4l1-5h-2Zm.6 7h4l-.8 4h-4l.8-4Z"),
+    voice: svg("M4 9h4l5-4v14l-5-4H4V9Zm12.5 3a4.5 4.5 0 0 0-2-3.7v7.4a4.5 4.5 0 0 0 2-3.7Z"),
+    stage: svg("M12 2a3 3 0 0 1 3 3v6a3 3 0 1 1-6 0V5a3 3 0 0 1 3-3Zm-7 9h2a5 5 0 0 0 10 0h2a7 7 0 0 1-6 6.9V21h-2v-3.1A7 7 0 0 1 5 11Z"),
+    forum: svg("M3 4h13a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H8l-4 3v-3H3a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1Zm16 5h2a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1h-1v3l-4-3h-6a1 1 0 0 1-1-1v-2h8a2 2 0 0 0 2-2V9Z"),
+    news: svg("M3 10v4h3l6 4V6l-6 4H3Zm12-3v10a5 5 0 0 0 0-10Z"),
+  };
+  const GRIP = svg("M9 5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0Zm0 7a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0Zm0 7a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0Zm9-14a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0Zm0 7a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0Zm0 7a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0Z");
+  const CHEVRON = svg("M7 10l5 5 5-5z", 18);
+  const VOICE_TYPES = new Set(["voice", "stage"]);
+
+  let guildId = "";
+  let groups = [];
+  let saved = "";            // order() as of the last successful save/load
+  let selected = null;       // { kind: "chan" | "cat", id }
+  let collapsed = new Set(prefGet("layoutCollapsed", []));
+  let pendingSync = new Set();
+  let saveTimer = null;
+  let saving = false;
+  let saveAgain = false;
+  let saveError = "";
+  let drag = null;
+
+  el.autoSave.checked = prefGet("layoutAutoSave", true);
+
+  // ----- model -----
+
+  const isVoice = (c) => VOICE_TYPES.has(c.type);
+  const order = () => JSON.stringify(groups.map((g) => [g.id, g.channels.map((c) => c.id)]));
+  const isDirty = () => order() !== saved;
+
+  function normalize() {
+    groups.forEach((g) => {
+      g.channels = g.channels.filter((c) => !isVoice(c)).concat(g.channels.filter(isVoice));
+    });
   }
 
-  const categoryName = (id) => (data.categories.find((c) => c.id === id) || {}).name;
+  function findChan(id) {
+    for (const g of groups) {
+      const i = g.channels.findIndex((c) => c.id === id);
+      if (i >= 0) return { g, i, c: g.channels[i] };
+    }
+    return null;
+  }
 
-  chanList.innerHTML = data.channels.map((c) => `
-    <div class="mod-list-item" data-channel-id="${c.id}">
-      <div class="mod-list-info">
-        <span class="mod-list-name">${c.type === "voice" ? "🔊" : "#"} ${escapeHtml(c.name)}</span>
-        <span class="mod-list-sub">${c.category_id ? escapeHtml(categoryName(c.category_id) || "") : "No category"}</span>
-      </div>
-      <div class="mod-list-actions">
-        <input type="text" class="field-input chan-rename-input" placeholder="Rename&hellip;">
-        <button class="btn-outline btn-small chan-rename-btn">Rename</button>
-        <select class="field-input chan-move-select">
-          <option value="">No category</option>
-          ${categoryOptions}
-        </select>
-        <button class="btn-outline btn-small chan-move-btn">Move</button>
-        <button class="btn-outline btn-small chan-delete-btn">Delete</button>
-      </div>
-    </div>`).join("");
+  const findGroup = (id) => groups.find((g) => g.id === id);
 
-  chanList.querySelectorAll(".mod-list-item").forEach((row) => {
-    const channelId = row.dataset.channelId;
-    const moveSelect = row.querySelector(".chan-move-select");
-    const currentCategory = data.channels.find((c) => c.id === channelId).category_id;
-    if (currentCategory) moveSelect.value = currentCategory;
+  function changeCount() {
+    let before;
+    try { before = JSON.parse(saved); } catch (_) { return 0; }
+    const pos = new Map();
+    before.forEach(([gid, ids], gi) => {
+      if (gid) pos.set(gid, `c${gi}`);
+      ids.forEach((id, i) => pos.set(id, `${gid}:${i}`));
+    });
+    let n = 0;
+    groups.forEach((g, gi) => {
+      if (g.id && pos.get(g.id) !== `c${gi}`) n++;
+      g.channels.forEach((c, i) => { if (pos.get(c.id) !== `${g.id}:${i}`) n++; });
+    });
+    return n;
+  }
 
-    row.querySelector(".chan-rename-btn").addEventListener("click", async () => {
-      const name = row.querySelector(".chan-rename-input").value.trim();
-      if (!name) return;
+  function reorder(list, index, where) {
+    let target = where === "up" ? index - 1 : where === "down" ? index + 1 : where === "top" ? 0 : list.length - 1;
+    target = Math.max(0, Math.min(list.length - 1, target));
+    if (target === index) return false;
+    const [item] = list.splice(index, 1);
+    list.splice(target, 0, item);
+    return true;
+  }
+
+  function moveChan(id, where) {
+    const f = findChan(id);
+    if (!f) return false;
+    const voice = isVoice(f.c);
+    const block = f.g.channels.filter((c) => isVoice(c) === voice);
+    if (!reorder(block, block.indexOf(f.c), where)) return false;
+    const others = f.g.channels.filter((c) => isVoice(c) !== voice);
+    f.g.channels = voice ? others.concat(block) : block.concat(others);
+    return true;
+  }
+
+  function moveCat(id, where) {
+    const cats = groups.slice(1);
+    const i = cats.findIndex((g) => g.id === id);
+    if (i < 0 || !reorder(cats, i, where)) return false;
+    groups = [groups[0]].concat(cats);
+    return true;
+  }
+
+  function setCat(id, catId) {
+    const f = findChan(id);
+    const target = findGroup(catId);
+    if (!f || !target || f.g === target) return false;
+    f.g.channels.splice(f.i, 1);
+    target.channels.push(f.c);
+    collapsed.delete(String(catId));
+    normalize();
+    return true;
+  }
+
+  // Mutations that already happened on Discord (create/delete) shouldn't
+  // count as unsaved layout changes.
+  function mutateSynced(fn) {
+    const wasClean = !isDirty();
+    fn();
+    if (wasClean) saved = order();
+  }
+
+  // ----- loading -----
+
+  async function open() {
+    const guilds = await api("/api/guilds");
+    const current = el.server.value || prefGet("layoutGuild", "");
+    if (!guilds.length) {
+      el.server.innerHTML = '<option value="">No servers found (is the bot online + invited?)</option>';
+      guildId = "";
+      render();
+      return;
+    }
+    el.server.innerHTML =
+      '<option value="">Choose a server&hellip;</option>' +
+      guilds.map((g) => `<option value="${g.id}">${escapeHtml(g.name)}</option>`).join("");
+    if (current && guilds.some((g) => g.id === current)) el.server.value = current;
+    else if (guilds.length === 1) el.server.value = guilds[0].id;
+    if (el.server.value !== guildId || !groups.length) await load();
+    else render();
+  }
+
+  async function load() {
+    clearTimeout(saveTimer);
+    guildId = el.server.value;
+    prefSet("layoutGuild", guildId);
+    selected = null;
+    pendingSync.clear();
+    saveError = "";
+    if (!guildId) {
+      groups = [];
+      render();
+      return;
+    }
+    el.tree.innerHTML = '<div class="lt-empty">Loading layout&hellip;</div>';
+    let data;
+    try {
+      data = await api(`/api/layout?guild_id=${encodeURIComponent(guildId)}`);
+    } catch (_) {
+      data = { groups: [] };
+    }
+    groups = data.groups || [];
+    saved = order();
+    render();
+  }
+
+  // ----- rendering -----
+
+  function chanHtml(c, q) {
+    const sel = selected && selected.kind === "chan" && selected.id === c.id;
+    const hidden = q && !c.name.toLowerCase().includes(q);
+    return `
+      <div class="lt-chan${sel ? " is-selected" : ""}${hidden ? " is-hidden" : ""}" data-chan="${c.id}">
+        <span class="lt-handle" title="Drag to move">${GRIP}</span>
+        <span class="lt-icon">${ICONS[c.type] || ICONS.text}</span>
+        <span class="lt-name">${escapeHtml(c.name)}</span>
+        ${c.type !== "text" ? `<span class="lt-type">${c.type}</span>` : ""}
+        <span class="lt-mini">
+          <button class="lt-icon-btn" data-act="up" title="Move up">&#9650;</button>
+          <button class="lt-icon-btn" data-act="down" title="Move down">&#9660;</button>
+        </span>
+      </div>`;
+  }
+
+  function groupHtml(g, q) {
+    const loose = g.id === null;
+    const sel = !loose && selected && selected.kind === "cat" && selected.id === g.id;
+    const isCollapsed = !q && collapsed.has(String(g.id));
+    const visible = q ? g.channels.filter((c) => c.name.toLowerCase().includes(q)).length : g.channels.length;
+    if (q && loose && !visible) return "";
+    const body = g.channels.length
+      ? g.channels.map((c) => chanHtml(c, q)).join("")
+      : `<div class="lt-group-empty">${loose ? "Drop channels here to take them out of every category." : "Empty &mdash; drop channels here."}</div>`;
+    return `
+      <div class="lt-group${sel ? " is-selected" : ""}${isCollapsed ? " is-collapsed" : ""}" data-group="${g.id || ""}">
+        <div class="lt-group-head">
+          ${loose ? '<span class="lt-handle" style="visibility:hidden"></span>' : `<span class="lt-handle" title="Drag to move category">${GRIP}</span>`}
+          <span class="lt-chevron" data-act="collapse">${CHEVRON}</span>
+          <span class="lt-group-name${loose ? " is-loose" : ""}">${loose ? "No category" : escapeHtml(g.name)}</span>
+          <span class="lt-count">${visible}</span>
+          ${loose ? "" : `<span class="lt-mini">
+            <button class="lt-icon-btn" data-act="up" title="Move category up">&#9650;</button>
+            <button class="lt-icon-btn" data-act="down" title="Move category down">&#9660;</button>
+          </span>`}
+        </div>
+        <div class="lt-group-body">${body}</div>
+      </div>`;
+  }
+
+  function render() {
+    if (!guildId) {
+      el.tree.innerHTML = '<div class="lt-empty">Pick a server to load its layout.</div>';
+    } else if (!groups.length) {
+      el.tree.innerHTML = '<div class="lt-empty">Couldn\'t load this server &mdash; is the bot online and still in it?</div>';
+    } else {
+      const q = el.filter.value.trim().toLowerCase();
+      el.tree.innerHTML = groups.map((g) => groupHtml(g, q)).join("");
+    }
+    renderCreateCats();
+    updateBars();
+  }
+
+  function renderCreateCats() {
+    const current = el.newCat.value;
+    el.newCat.innerHTML = '<option value="">No category</option>' +
+      groups.slice(1).map((g) => `<option value="${g.id}">${escapeHtml(g.name)}</option>`).join("");
+    if (current && findGroup(current)) el.newCat.value = current;
+    el.newCat.disabled = el.newType.value === "category";
+  }
+
+  function flash(sel) {
+    const row = el.tree.querySelector(sel);
+    if (!row) return;
+    row.classList.add("is-flash");
+    row.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }
+
+  function updateBars() {
+    // action bar — what's selected and what you can do with it
+    const chan = selected && selected.kind === "chan" ? findChan(selected.id) : null;
+    const cat = selected && selected.kind === "cat" ? findGroup(selected.id) : null;
+    if (selected && !chan && !cat) selected = null;
+    el.actionBar.hidden = !selected;
+    if (chan) {
+      el.selLabel.innerHTML = `<strong>${escapeHtml(chan.c.name)}</strong> &middot; ${chan.g.id ? escapeHtml(chan.g.name) : "no category"}`;
+      el.moveTo.innerHTML = groups.map((g) =>
+        `<option value="${g.id || ""}"${g === chan.g ? " selected" : ""}>${g.id ? "&#8618; " + escapeHtml(g.name) : "&#8618; No category"}</option>`).join("");
+      el.moveTo.hidden = false;
+      el.syncBtn.hidden = false;
+      el.syncBtn.disabled = !chan.g.id;
+      el.cloneBtn.hidden = false;
+    } else if (cat) {
+      el.selLabel.innerHTML = `<strong>${escapeHtml(cat.name)}</strong> &middot; category, ${cat.channels.length} channel${cat.channels.length === 1 ? "" : "s"}`;
+      el.moveTo.hidden = true;
+      el.syncBtn.hidden = true;
+      el.cloneBtn.hidden = true;
+    }
+
+    // save bar — status, plus manual save controls when instant save is off
+    const dirty = groups.length && isDirty();
+    el.saveBar.hidden = !guildId || !groups.length;
+    el.saveBar.classList.toggle("is-dirty", !!dirty);
+    const manual = !el.autoSave.checked;
+    el.discardBtn.hidden = !(manual && dirty);
+    el.saveBtn.hidden = !(manual && dirty);
+    let dot = "", text = "All changes saved";
+    if (saving) { dot = "is-busy"; text = "Saving to Discord&hellip;"; }
+    else if (saveError) { dot = "is-error"; text = escapeHtml(saveError); }
+    else if (dirty) {
+      const n = changeCount();
+      dot = "is-pending";
+      text = manual ? `${n || 1} unsaved change${n === 1 ? "" : "s"}` : "Saving soon&hellip;";
+    }
+    el.saveLabel.innerHTML = `<span class="saving-dot ${dot}"></span>${text}`;
+  }
+
+  // ----- saving -----
+
+  function changed(flashSel) {
+    normalize();
+    render();
+    if (flashSel) flash(flashSel);
+    if (el.autoSave.checked) {
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(save, 450);
+    }
+  }
+
+  async function save() {
+    clearTimeout(saveTimer);
+    if (saving) { saveAgain = true; return; }
+    if (!guildId || (!isDirty() && !pendingSync.size)) { updateBars(); return; }
+    saving = true;
+    saveError = "";
+    updateBars();
+    const forGuild = guildId;
+    const snapshot = order();
+    const sync = [...pendingSync];
+    pendingSync.clear();
+    let res;
+    try {
+      res = await api("/api/layout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          guild_id: forGuild,
+          groups: groups.map((g) => ({ id: g.id, channels: g.channels.map((c) => c.id) })),
+          sync_ids: sync,
+        }),
+      });
+    } catch (_) {
+      res = { ok: false, error: "Couldn't reach the app — is it still running?" };
+    }
+    saving = false;
+    if (forGuild !== guildId) return;  // switched servers mid-save
+    if (res.ok) {
+      saved = snapshot;
+      if (sync.length) toast("Permissions synced with the category.", "success");
+    } else {
+      saveError = res.error || "Couldn't save the layout.";
+      toast(saveError, "error");
+    }
+    if (saveAgain) {
+      saveAgain = false;
+      return save();
+    }
+    updateBars();
+  }
+
+  // ----- selection & actions -----
+
+  function select(kind, id) {
+    selected = id === null || id === undefined ? null : { kind, id };
+    el.tree.querySelectorAll(".is-selected").forEach((n) => n.classList.remove("is-selected"));
+    if (selected) {
+      const node = kind === "chan" ? el.tree.querySelector(`[data-chan="${id}"]`) : el.tree.querySelector(`[data-group="${id}"]`);
+      if (node) node.classList.add("is-selected");
+    }
+    updateBars();
+  }
+
+  function moveSelected(where) {
+    if (!selected) return;
+    if (selected.kind === "chan") {
+      if (moveChan(selected.id, where)) changed(`[data-chan="${selected.id}"]`);
+      else toast(where === "up" || where === "top" ? "Already at the top of its block." : "Already at the bottom of its block.");
+    } else if (moveCat(selected.id, where)) {
+      changed(`[data-group="${selected.id}"] .lt-group-head`);
+    }
+  }
+
+  function startRename() {
+    if (!selected) return;
+    const node = selected.kind === "chan"
+      ? el.tree.querySelector(`[data-chan="${selected.id}"] .lt-name`)
+      : el.tree.querySelector(`[data-group="${selected.id}"] .lt-group-name`);
+    const item = selected.kind === "chan" ? findChan(selected.id).c : findGroup(selected.id);
+    if (!node || !item) return;
+    const input = document.createElement("input");
+    input.className = "field-input lt-rename";
+    input.value = item.name;
+    input.maxLength = 100;
+    node.replaceWith(input);
+    input.focus();
+    input.select();
+    let done = false;
+    const finish = async (commit) => {
+      if (done) return;
+      done = true;
+      const name = input.value.trim();
+      if (!commit || !name || name === item.name) { render(); return; }
       const res = await api("/api/channels/rename", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ guild_id: guildId, channel_id: channelId, name }),
+        body: JSON.stringify({ guild_id: guildId, channel_id: item.id, name }),
       });
-      if (res.ok) refreshChanData();
-      else alert(res.error || "Couldn't rename that channel.");
+      if (res.ok) {
+        // Discord normalizes text channel names (lowercase, dashes)
+        item.name = item.type === "text" || item.type === "news" || item.type === "forum"
+          ? name.toLowerCase().replace(/\s+/g, "-") : name;
+        toast("Renamed.", "success");
+      } else {
+        toast(res.error || "Couldn't rename that.", "error");
+      }
+      render();
+    };
+    input.addEventListener("keydown", (e) => {
+      e.stopPropagation();
+      if (e.key === "Enter") finish(true);
+      if (e.key === "Escape") finish(false);
     });
+    input.addEventListener("blur", () => finish(true));
+    input.addEventListener("pointerdown", (e) => e.stopPropagation());
+    input.addEventListener("click", (e) => e.stopPropagation());
+  }
 
-    row.querySelector(".chan-move-btn").addEventListener("click", async () => {
-      const res = await api("/api/channels/move", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ guild_id: guildId, channel_id: channelId, category_id: moveSelect.value }),
-      });
-      if (res.ok) refreshChanData();
-      else alert(res.error || "Couldn't move that channel.");
+  async function deleteSelected() {
+    if (!selected) return;
+    const isCat = selected.kind === "cat";
+    const item = isCat ? findGroup(selected.id) : findChan(selected.id)?.c;
+    if (!item) return;
+    const msg = isCat
+      ? `Delete category "${item.name}"? Its channels stay, they just become uncategorized.`
+      : `Delete #${item.name}? This can't be undone.`;
+    if (!confirm(msg)) return;
+    const res = await api("/api/channels/delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ guild_id: guildId, channel_id: item.id }),
     });
+    if (!res.ok) {
+      toast(res.error || "Couldn't delete that.", "error");
+      return;
+    }
+    mutateSynced(() => {
+      if (isCat) {
+        groups[0].channels.push(...item.channels);
+        groups = groups.filter((g) => g !== item);
+      } else {
+        const f = findChan(item.id);
+        f.g.channels.splice(f.i, 1);
+      }
+      normalize();
+    });
+    selected = null;
+    toast(`Deleted ${item.name}.`, "success");
+    render();
+  }
 
-    row.querySelector(".chan-delete-btn").addEventListener("click", async () => {
-      const name = row.querySelector(".mod-list-name").textContent;
-      if (!confirm(`Delete channel "${name.trim()}"? This can't be undone.`)) return;
-      const res = await api("/api/channels/delete", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ guild_id: guildId, channel_id: channelId }),
-      });
-      if (res.ok) refreshChanData();
-      else alert(res.error || "Couldn't delete that channel.");
+  async function cloneSelected() {
+    if (!selected || selected.kind !== "chan") return;
+    const f = findChan(selected.id);
+    const res = await api("/api/channels/clone", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ guild_id: guildId, channel_id: f.c.id }),
     });
+    if (!res.ok) {
+      toast(res.error || "Couldn't clone that.", "error");
+      return;
+    }
+    const copy = { id: res.channel.id, name: res.channel.name, type: f.c.type };
+    mutateSynced(() => f.g.channels.push(copy));
+    // then tuck the copy right under the original
+    const block = f.g.channels.filter((c) => isVoice(c) === isVoice(copy));
+    block.splice(block.indexOf(copy), 1);
+    block.splice(block.indexOf(f.c) + 1, 0, copy);
+    const others = f.g.channels.filter((c) => isVoice(c) !== isVoice(copy));
+    f.g.channels = isVoice(copy) ? others.concat(block) : block.concat(others);
+    selected = { kind: "chan", id: copy.id };
+    toast(`Cloned ${f.c.name}.`, "success");
+    changed(`[data-chan="${copy.id}"]`);
+  }
+
+  async function create() {
+    const name = el.newName.value.trim();
+    const type = el.newType.value;
+    if (!guildId || !name) {
+      toast("Pick a server and type a name first.", "error");
+      el.newName.focus();
+      return;
+    }
+    el.createBtn.disabled = true;
+    const categoryId = type === "category" ? "" : el.newCat.value;
+    const res = await api("/api/channels", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ guild_id: guildId, name, type, category_id: categoryId }),
+    });
+    el.createBtn.disabled = false;
+    if (!res.ok) {
+      toast(res.error || "Couldn't create that.", "error");
+      return;
+    }
+    el.newName.value = "";
+    mutateSynced(() => {
+      if (type === "category") {
+        groups.push({ id: res.channel.id, name: res.channel.name, channels: [] });
+      } else {
+        const g = findGroup(categoryId || null) || groups[0];
+        g.channels.push({ id: res.channel.id, name: res.channel.name, type });
+        normalize();
+      }
+    });
+    selected = { kind: type === "category" ? "cat" : "chan", id: res.channel.id };
+    toast(`Created ${res.channel.name}.`, "success");
+    render();
+    flash(type === "category" ? `[data-group="${res.channel.id}"] .lt-group-head` : `[data-chan="${res.channel.id}"]`);
+  }
+
+  function sortAll() {
+    const before = order();
+    groups.forEach((g) => g.channels.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true })));
+    normalize();
+    if (order() === before) { toast("Already sorted."); return; }
+    changed();
+    toast("Sorted every category A→Z.");
+  }
+
+  // ----- drag & drop (pointer events: works with mouse and touch) -----
+
+  function startDrag(e, handle) {
+    if (e.button !== undefined && e.button !== 0) return;
+    const chanRow = handle.closest(".lt-chan");
+    const groupEl = handle.closest(".lt-group");
+    const kind = chanRow ? "chan" : "cat";
+    const row = chanRow || groupEl;
+    const id = kind === "chan" ? row.dataset.chan : groupEl.dataset.group;
+    if (kind === "cat" && !id) return;
+    e.preventDefault();
+    const item = kind === "chan" ? findChan(id).c : findGroup(id);
+    const ghost = document.createElement("div");
+    ghost.className = "lt-ghost";
+    ghost.innerHTML = kind === "chan" ? `${ICONS[item.type] || ICONS.text} ${escapeHtml(item.name)}` : `&#128193; ${escapeHtml(item.name)}`;
+    document.body.appendChild(ghost);
+    const drop = document.createElement("div");
+    drop.className = "lt-drop" + (kind === "cat" ? " is-group" : "");
+    drag = { kind, id, row, ghost, drop, target: null, y: e.clientY, x: e.clientX, raf: 0 };
+    row.classList.add("lt-dragging");
+    document.body.classList.add("is-dragging");
+    select(kind, id);
+    positionGhost(e.clientX, e.clientY);
+    drag.raf = requestAnimationFrame(autoScroll);
+    window.addEventListener("pointermove", onDragMove, { passive: false });
+    window.addEventListener("pointerup", endDrag);
+    window.addEventListener("pointercancel", cancelDrag);
+  }
+
+  function positionGhost(x, y) {
+    drag.ghost.style.left = `${x}px`;
+    drag.ghost.style.top = `${y}px`;
+  }
+
+  function autoScroll() {
+    if (!drag) return;
+    const edge = 80;
+    if (drag.y < edge) window.scrollBy(0, -Math.ceil((edge - drag.y) / 5));
+    else if (drag.y > window.innerHeight - edge) window.scrollBy(0, Math.ceil((drag.y - (window.innerHeight - edge)) / 5));
+    updateDropTarget();
+    drag.raf = requestAnimationFrame(autoScroll);
+  }
+
+  function onDragMove(e) {
+    if (!drag) return;
+    e.preventDefault();
+    drag.x = e.clientX;
+    drag.y = e.clientY;
+    positionGhost(e.clientX, e.clientY);
+    updateDropTarget();
+  }
+
+  function updateDropTarget() {
+    const under = document.elementFromPoint(drag.x, drag.y);
+    el.tree.querySelectorAll(".is-drop-target").forEach((n) => n.classList.remove("is-drop-target"));
+    if (!under || !el.tree.contains(under)) return;
+    const groupEl = under.closest(".lt-group");
+    if (!groupEl) return;
+
+    if (drag.kind === "chan") {
+      const chanRow = under.closest(".lt-chan");
+      const body = groupEl.querySelector(".lt-group-body");
+      groupEl.classList.add("is-drop-target");
+      if (chanRow && chanRow !== drag.row) {
+        const r = chanRow.getBoundingClientRect();
+        const after = drag.y > r.top + r.height / 2;
+        chanRow.parentNode.insertBefore(drag.drop, after ? chanRow.nextSibling : chanRow);
+        drag.target = { group: groupEl.dataset.group || null, ref: chanRow.dataset.chan, after };
+      } else if (!chanRow) {
+        const inHead = !!under.closest(".lt-group-head");
+        if (inHead || groupEl.classList.contains("is-collapsed")) {
+          body.insertBefore(drag.drop, body.firstChild);
+          drag.target = { group: groupEl.dataset.group || null, ref: null, start: true };
+        } else {
+          body.appendChild(drag.drop);
+          drag.target = { group: groupEl.dataset.group || null, ref: null, start: false };
+        }
+      }
+    } else if (groupEl !== drag.row) {
+      if (!groupEl.dataset.group) {
+        groupEl.after(drag.drop);
+        drag.target = { ref: null };
+      } else {
+        const r = groupEl.getBoundingClientRect();
+        const after = drag.y > r.top + r.height / 2;
+        groupEl.parentNode.insertBefore(drag.drop, after ? groupEl.nextSibling : groupEl);
+        drag.target = { ref: groupEl.dataset.group, after };
+      }
+    }
+  }
+
+  function stopDrag() {
+    cancelAnimationFrame(drag.raf);
+    window.removeEventListener("pointermove", onDragMove);
+    window.removeEventListener("pointerup", endDrag);
+    window.removeEventListener("pointercancel", cancelDrag);
+    drag.ghost.remove();
+    drag.drop.remove();
+    drag.row.classList.remove("lt-dragging");
+    document.body.classList.remove("is-dragging");
+    const d = drag;
+    drag = null;
+    return d;
+  }
+
+  function cancelDrag() {
+    if (!drag) return;
+    stopDrag();
+    render();
+  }
+
+  function endDrag() {
+    if (!drag) return;
+    const d = stopDrag();
+    const t = d.target;
+    if (!t) { render(); return; }
+    const before = order();
+
+    if (d.kind === "chan") {
+      const f = findChan(d.id);
+      const g = findGroup(t.group);
+      if (!f || !g) { render(); return; }
+      f.g.channels.splice(f.i, 1);
+      let idx = t.ref ? g.channels.findIndex((c) => c.id === t.ref) : -1;
+      if (idx >= 0) idx += t.after ? 1 : 0;
+      else idx = t.start ? 0 : g.channels.length;
+      g.channels.splice(idx, 0, f.c);
+      collapsed.delete(String(g.id));
+    } else {
+      const cat = findGroup(d.id);
+      const rest = groups.filter((g) => g !== cat);
+      let idx = t.ref ? rest.findIndex((g) => g.id === t.ref) + (t.after ? 1 : 0) : 1;
+      rest.splice(Math.max(1, idx), 0, cat);
+      groups = rest;
+    }
+
+    normalize();
+    if (order() === before) { render(); return; }
+    changed(d.kind === "chan" ? `[data-chan="${d.id}"]` : `[data-group="${d.id}"] .lt-group-head`);
+  }
+
+  // ----- wiring -----
+
+  el.tree.addEventListener("pointerdown", (e) => {
+    const handle = e.target.closest(".lt-handle");
+    if (handle && handle.innerHTML) startDrag(e, handle);
   });
-}
 
-chanServerSelect.addEventListener("change", refreshChanData);
+  el.tree.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-act]");
+    const chanRow = e.target.closest(".lt-chan");
+    const groupEl = e.target.closest(".lt-group");
+    if (!groupEl) return;
+    const groupId = groupEl.dataset.group || null;
 
-document.getElementById("chanCreateBtn").addEventListener("click", async () => {
-  const guildId = chanServerSelect.value;
-  const name = chanNameInput.value.trim();
-  if (!guildId || !name) {
-    setMsg(chanCreateMsg, "Pick a server and enter a name first.", "error");
-    return;
-  }
-  const data = await api("/api/channels", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ guild_id: guildId, name, type: chanTypeSelect.value, category_id: chanCategorySelect.value }),
+    if (btn && btn.dataset.act === "collapse") {
+      const key = String(groupId);
+      collapsed.has(key) ? collapsed.delete(key) : collapsed.add(key);
+      prefSet("layoutCollapsed", [...collapsed]);
+      groupEl.classList.toggle("is-collapsed");
+      return;
+    }
+    if (btn && chanRow) {
+      select("chan", chanRow.dataset.chan);
+      moveSelected(btn.dataset.act);
+      return;
+    }
+    if (btn && groupId) {
+      select("cat", groupId);
+      moveSelected(btn.dataset.act);
+      return;
+    }
+    if (chanRow) {
+      const same = selected && selected.kind === "chan" && selected.id === chanRow.dataset.chan;
+      select("chan", same ? null : chanRow.dataset.chan);
+    } else if (e.target.closest(".lt-group-head") && groupId) {
+      const same = selected && selected.kind === "cat" && selected.id === groupId;
+      select("cat", same ? null : groupId);
+    }
   });
-  setMsg(chanCreateMsg, data.ok ? "Created." : (data.error || "Couldn't create that channel."), data.ok ? "success" : "error");
-  if (data.ok) {
-    chanNameInput.value = "";
-    refreshChanData();
-  }
-});
 
-// ---------- categories tab ----------
-
-const catServerSelect = document.getElementById("catServerSelect");
-const catNameInput = document.getElementById("catNameInput");
-const catCreateMsg = document.getElementById("catCreateMsg");
-const catList = document.getElementById("catList");
-
-async function refreshCatServers() {
-  const guilds = await api("/api/guilds");
-  const current = catServerSelect.value;
-  if (!guilds.length) {
-    catServerSelect.innerHTML = '<option value="">No servers found (is the bot online + invited?)</option>';
-    return;
-  }
-  catServerSelect.innerHTML =
-    '<option value="">Choose a server&hellip;</option>' +
-    guilds.map((g) => `<option value="${g.id}">${escapeHtml(g.name)}</option>`).join("");
-  if (current) catServerSelect.value = current;
-  await refreshCatData();
-}
-
-async function refreshCatData() {
-  const guildId = catServerSelect.value;
-  if (!guildId) {
-    catList.innerHTML = "";
-    return;
-  }
-  const data = await api(`/api/channels_full?guild_id=${encodeURIComponent(guildId)}`);
-  if (!data.categories.length) {
-    catList.innerHTML = '<p class="mod-list-empty">No categories yet.</p>';
-    return;
-  }
-  catList.innerHTML = data.categories.map((c) => `
-    <div class="mod-list-item" data-category-id="${c.id}">
-      <div class="mod-list-info"><span class="mod-list-name">${escapeHtml(c.name)}</span></div>
-      <div class="mod-list-actions">
-        <input type="text" class="field-input cat-rename-input" placeholder="Rename&hellip;">
-        <button class="btn-outline btn-small cat-rename-btn">Rename</button>
-        <button class="btn-outline btn-small cat-delete-btn">Delete</button>
-      </div>
-    </div>`).join("");
-
-  catList.querySelectorAll(".mod-list-item").forEach((row) => {
-    const categoryId = row.dataset.categoryId;
-    row.querySelector(".cat-rename-btn").addEventListener("click", async () => {
-      const name = row.querySelector(".cat-rename-input").value.trim();
-      if (!name) return;
-      const res = await api("/api/channels/rename", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ guild_id: guildId, channel_id: categoryId, name }),
-      });
-      if (res.ok) refreshCatData();
-      else alert(res.error || "Couldn't rename that category.");
-    });
-    row.querySelector(".cat-delete-btn").addEventListener("click", async () => {
-      const name = row.querySelector(".mod-list-name").textContent;
-      if (!confirm(`Delete category "${name}"? Channels inside it just become uncategorized.`)) return;
-      const res = await api("/api/channels/delete", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ guild_id: guildId, channel_id: categoryId }),
-      });
-      if (res.ok) refreshCatData();
-      else alert(res.error || "Couldn't delete that category.");
-    });
+  el.tree.addEventListener("dblclick", (e) => {
+    if (e.target.closest(".lt-name, .lt-group-name") && selected) startRename();
   });
-}
 
-catServerSelect.addEventListener("change", refreshCatData);
-
-document.getElementById("catCreateBtn").addEventListener("click", async () => {
-  const guildId = catServerSelect.value;
-  const name = catNameInput.value.trim();
-  if (!guildId || !name) {
-    setMsg(catCreateMsg, "Pick a server and enter a name first.", "error");
-    return;
-  }
-  const data = await api("/api/channels", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ guild_id: guildId, name, type: "category" }),
+  el.actionBar.querySelectorAll("[data-move]").forEach((b) => b.addEventListener("click", () => moveSelected(b.dataset.move)));
+  el.moveTo.addEventListener("change", () => {
+    if (!selected || selected.kind !== "chan") return;
+    if (setCat(selected.id, el.moveTo.value || null)) changed(`[data-chan="${selected.id}"]`);
   });
-  setMsg(catCreateMsg, data.ok ? "Created." : (data.error || "Couldn't create that category."), data.ok ? "success" : "error");
-  if (data.ok) {
-    catNameInput.value = "";
-    refreshCatData();
-  }
-});
+  el.syncBtn.addEventListener("click", () => {
+    if (!selected || selected.kind !== "chan") return;
+    pendingSync.add(selected.id);
+    save();
+  });
+  el.renameBtn.addEventListener("click", startRename);
+  el.cloneBtn.addEventListener("click", cloneSelected);
+  el.deleteBtn.addEventListener("click", deleteSelected);
+
+  el.server.addEventListener("change", async () => {
+    if (isDirty() && !el.autoSave.checked && !confirm("Discard unsaved layout changes?")) {
+      el.server.value = guildId;
+      return;
+    }
+    await load();
+  });
+  el.reload.addEventListener("click", async () => {
+    if (isDirty() && !confirm("Reload from Discord and drop unsaved changes?")) return;
+    await load();
+    toast("Reloaded from Discord.");
+  });
+  el.createBtn.addEventListener("click", create);
+  el.newName.addEventListener("keydown", (e) => { if (e.key === "Enter") create(); });
+  el.newType.addEventListener("change", renderCreateCats);
+  el.filter.addEventListener("input", render);
+  el.autoSave.addEventListener("change", () => {
+    prefSet("layoutAutoSave", el.autoSave.checked);
+    if (el.autoSave.checked && isDirty()) save();
+    else updateBars();
+  });
+  el.collapseBtn.addEventListener("click", () => {
+    const anyOpen = groups.some((g) => !collapsed.has(String(g.id)));
+    collapsed = anyOpen ? new Set(groups.map((g) => String(g.id))) : new Set();
+    el.collapseBtn.textContent = anyOpen ? "Expand all" : "Collapse all";
+    prefSet("layoutCollapsed", [...collapsed]);
+    render();
+  });
+  el.sortBtn.addEventListener("click", sortAll);
+  el.discardBtn.addEventListener("click", load);
+  el.saveBtn.addEventListener("click", save);
+
+  // keyboard: ↑/↓ select, Alt+↑/↓ move, F2 rename, Delete delete, Esc deselect
+  document.addEventListener("keydown", (e) => {
+    if (!document.getElementById("tab-layout").classList.contains("is-active")) return;
+    if (drag && e.key === "Escape") { cancelDrag(); return; }
+    if (e.target.closest && e.target.closest("input, textarea, select")) return;
+    if (e.key === "Escape" && selected) { select(null, null); return; }
+    if (!groups.length) return;
+
+    if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+      e.preventDefault();
+      if (e.altKey && selected) { moveSelected(e.key === "ArrowUp" ? "up" : "down"); return; }
+      const nodes = [...el.tree.querySelectorAll(".lt-group[data-group]:not([data-group='']) > .lt-group-head, .lt-chan:not(.is-hidden)")]
+        .filter((n) => n.offsetParent !== null);
+      const cur = nodes.findIndex((n) => n.classList.contains("is-selected") || n.parentNode.classList.contains("is-selected"));
+      const next = nodes[Math.max(0, Math.min(nodes.length - 1, cur + (e.key === "ArrowUp" ? -1 : 1)))];
+      if (!next) return;
+      if (next.classList.contains("lt-chan")) select("chan", next.dataset.chan);
+      else select("cat", next.parentNode.dataset.group);
+      next.scrollIntoView({ block: "nearest" });
+    } else if (e.key === "F2" && selected) {
+      e.preventDefault();
+      startRename();
+    } else if ((e.key === "Delete" || e.key === "Backspace") && selected) {
+      e.preventDefault();
+      deleteSelected();
+    }
+  });
+
+  window.addEventListener("beforeunload", (e) => {
+    if (guildId && groups.length && isDirty() && !el.autoSave.checked) e.preventDefault();
+  });
+
+  return { open };
+})();
 
 // ---------- fonts tab ----------
 

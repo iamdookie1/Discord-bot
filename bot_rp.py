@@ -31,6 +31,7 @@ import discord
 
 import guild_settings
 from owner import OWNER_ID
+from theme import EMBED_COLOR
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 RP_COMMANDS_PATH = os.path.join(BASE_DIR, "rp_commands.json")
@@ -257,7 +258,7 @@ async def handle(name: str, ctx):
         verb = BUILTIN_RP_ACTIONS.get(name, (name + "s",))[0]
         text = f"**{ctx.author.display_name}** {verb} **{target.display_name}**!"
 
-    embed = discord.Embed(description=text, color=discord.Color(0xFFB454))
+    embed = discord.Embed(description=text, color=EMBED_COLOR)
 
     if gif.startswith(LOCAL_PREFIX):
         filename = gif[len(LOCAL_PREFIX):]

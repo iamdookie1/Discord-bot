@@ -12,8 +12,10 @@ import discord
 
 import bot_backup
 import bot_commands
+import bot_layout
 import bot_tts
 import guild_settings
+from theme import EMBED_COLOR
 
 PRESENCE_TYPES = {
     "playing": discord.ActivityType.playing,
@@ -600,26 +602,48 @@ class BotManager:
 
     # ---------- channels & categories ----------
 
-    def list_channels_full(self, guild_id: str) -> dict:
-        """Everything the Channels/Categories tabs need in one call:
-        every category, plus every text/voice channel with which category
-        (if any) it's under."""
+    def get_layout(self, guild_id: str) -> dict:
+        """The Layout tab's tree: groups (uncategorized first, then each
+        category in order) with their channels in display order."""
         if not (self.client and self.status == "online"):
-            return {"categories": [], "channels": []}
+            return {"groups": []}
         guild = discord.utils.get(self.client.guilds, id=int(guild_id))
         if not guild:
-            return {"categories": [], "channels": []}
-        categories = [{"id": str(c.id), "name": c.name} for c in guild.categories]
-        channels = [
-            {
-                "id": str(c.id),
-                "name": c.name,
-                "type": "voice" if isinstance(c, discord.VoiceChannel) else "text",
-                "category_id": str(c.category_id) if c.category_id else None,
-            }
-            for c in list(guild.text_channels) + list(guild.voice_channels)
-        ]
-        return {"categories": categories, "channels": channels}
+            return {"groups": []}
+        return bot_layout.to_web(guild)
+
+    def apply_layout(self, guild_id: str, groups: list, sync_ids=()) -> dict:
+        """Write a whole rearranged layout back in one bulk request."""
+        async def _do():
+            guild = self.client.get_guild(int(guild_id))
+            if not guild:
+                return {"ok": False, "error": "Server not found — is the bot still in it?"}
+            try:
+                layout = bot_layout.layout_from_web(guild, groups)
+                await bot_layout.apply(guild, layout, sync_ids={int(i) for i in sync_ids})
+            except (ValueError, TypeError):
+                return {"ok": False, "error": "That layout didn't make sense — refresh and try again."}
+            except discord.HTTPException as exc:
+                return {"ok": False, "error": f"Discord refused that layout: {exc.text or exc}"}
+            return {"ok": True}
+
+        result = self._run_coro(_do(), default=None, timeout=30)
+        return result or {"ok": False, "error": "Bot isn't connected (or Discord took too long)."}
+
+    def clone_channel(self, guild_id: str, channel_id: str) -> dict:
+        async def _do():
+            guild = self.client.get_guild(int(guild_id))
+            channel = guild.get_channel(int(channel_id)) if guild else None
+            if not channel or isinstance(channel, discord.CategoryChannel):
+                return {"ok": False, "error": "That channel doesn't exist anymore."}
+            try:
+                clone = await channel.clone(reason="Cloned from Control Deck")
+            except discord.HTTPException as exc:
+                return {"ok": False, "error": f"Couldn't clone that: {exc.text}"}
+            return {"ok": True, "channel": {"id": str(clone.id), "name": clone.name}}
+
+        result = self._run_coro(_do(), default=None)
+        return result or {"ok": False, "error": "Bot isn't connected."}
 
     def create_channel(self, guild_id: str, name: str, channel_type: str, category_id: str = "") -> dict:
         async def _do():
@@ -634,6 +658,10 @@ class BotManager:
             try:
                 if channel_type == "category":
                     channel = await guild.create_category(name=name[:100], reason="Created from Control Deck")
+                elif channel_type == "stage":
+                    channel = await guild.create_stage_channel(name=name[:100], category=category, reason="Created from Control Deck")
+                elif channel_type == "forum":
+                    channel = await guild.create_forum(name=name[:100], category=category, reason="Created from Control Deck")
                 elif channel_type == "voice":
                     channel = await guild.create_voice_channel(name=name[:100], category=category, reason="Created from Control Deck")
                 else:
@@ -712,7 +740,7 @@ async def _post_modlog(guild, action_name: str, target, reason=None):
     description = f"**Target:** {target}\n**By:** Control Deck (web)"
     if reason:
         description += f"\n**Reason:** {reason}"
-    embed = discord.Embed(title=action_name, description=description, color=discord.Color(0xFFB454))
+    embed = discord.Embed(title=action_name, description=description, color=EMBED_COLOR)
     try:
         await channel.send(embed=embed)
     except discord.HTTPException:
