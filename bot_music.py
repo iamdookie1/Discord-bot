@@ -30,6 +30,7 @@ import urllib.request
 import discord
 
 import guild_settings
+from theme import EMBED_COLOR
 import voice_owner
 
 try:
@@ -432,7 +433,7 @@ def _build_embed(state: GuildMusicState) -> discord.Embed:
 
     elapsed = _elapsed(state)
     duration = track.get("duration")
-    embed = discord.Embed(title="🎵 Now Playing", description=f"**{track['title']}**", color=discord.Color(0xFFB454))
+    embed = discord.Embed(title="🎵 Now Playing", description=f"**{track['title']}**", color=EMBED_COLOR)
 
     bar = _progress_bar(elapsed, duration)
     if bar:

@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#000000">
 <title>Control Deck</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -57,14 +58,9 @@
       <span>Mod</span>
     </button>
 
-    <button class="rail-tab" data-tab="channels">
-      <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M4 4h16a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1Zm2 4v2h4V8H6Zm6 0v2h6V8h-6ZM6 12v2h8v-2H6Zm10 0v2h2v-2h-2ZM6 16v2h4v-2H6Zm6 0v2h6v-2h-6Z"/></svg>
-      <span>Channels</span>
-    </button>
-
-    <button class="rail-tab" data-tab="categories">
-      <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M3 6a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v2H3V6Zm0 5h20v8a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-8Z"/></svg>
-      <span>Categories</span>
+    <button class="rail-tab" data-tab="layout">
+      <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M4 3h7v7H4V3Zm9 0h7v4h-7V3Zm0 6h7v12h-7V9ZM4 12h7v9H4v-9Z"/></svg>
+      <span>Layout</span>
     </button>
 
     <button class="rail-tab" data-tab="fonts">
@@ -534,7 +530,7 @@
     <section class="panel" id="tab-cmds">
       <header class="panel-head">
         <h1>Cmds</h1>
-        <p>75+ built-in commands. Toggle any of them off if you don't want it active.</p>
+        <p>90 built-in commands. Toggle any of them off if you don't want it active.</p>
       </header>
 
       <div class="card card-quiet">
@@ -553,6 +549,12 @@
       <div class="card">
         <h2 class="card-title">Moderation <span class="card-title-sub">permission-gated</span></h2>
         <div class="cmd-list" id="moderationCmdList"></div>
+      </div>
+
+      <div class="card">
+        <h2 class="card-title">Layout <span class="card-title-sub">needs Manage Channels</span></h2>
+        <p class="field-hint">Rearrange a server from chat. <code>!layout</code> opens an interactive editor with menus and buttons; the rest are one-shot shortcuts &mdash; e.g. <code>!movech #rules top</code>, <code>!setcat #memes Fun</code>, <code>!swapch #a #b</code>, <code>!movecat Voice up</code>.</p>
+        <div class="cmd-list" id="layoutCmdList"></div>
       </div>
 
       <div class="card">
@@ -804,76 +806,69 @@
       </div>
     </section>
 
-    <!-- ===== Channels tab ===== -->
-    <section class="panel" id="tab-channels">
+    <!-- ===== Layout tab (channels + categories) ===== -->
+    <section class="panel panel-wide" id="tab-layout">
       <header class="panel-head">
-        <h1>Channels</h1>
-        <p>Create, rename, move, and delete text &amp; voice channels.</p>
+        <h1>Layout</h1>
+        <p>Drag channels and categories to rearrange a server, or tap one and use the arrows. Everything saves to Discord in a single request.</p>
       </header>
 
-      <div class="card">
-        <label class="field-label" for="chanServerSelect">Server</label>
-        <select id="chanServerSelect" class="field-input">
-          <option value="">Connect the bot first&hellip;</option>
-        </select>
-      </div>
-
-      <div class="card">
-        <h2 class="card-title">Create a channel</h2>
-        <label class="field-label" for="chanNameInput">Name</label>
-        <input type="text" id="chanNameInput" class="field-input" placeholder="e.g. general-chat">
-        <div class="field-grid">
-          <div>
-            <label class="field-label" for="chanTypeSelect">Type</label>
-            <select id="chanTypeSelect" class="field-input">
-              <option value="text">Text</option>
-              <option value="voice">Voice</option>
-            </select>
-          </div>
-          <div>
-            <label class="field-label" for="chanCategorySelect">Category <span class="card-title-sub">optional</span></label>
-            <select id="chanCategorySelect" class="field-input">
-              <option value="">None</option>
-            </select>
-          </div>
-        </div>
-        <div class="btn-row"><button class="btn-primary" id="chanCreateBtn">Create channel</button></div>
-        <p class="form-msg" id="chanCreateMsg"></p>
-      </div>
-
-      <div class="card">
-        <h2 class="card-title">Existing channels</h2>
-        <div id="chanList" class="mod-list"></div>
-      </div>
-    </section>
-
-    <!-- ===== Categories tab ===== -->
-    <section class="panel" id="tab-categories">
-      <header class="panel-head">
-        <h1>Categories</h1>
-        <p>Create, rename, and delete channel categories.</p>
-      </header>
-
-      <div class="card">
-        <label class="field-label" for="catServerSelect">Server</label>
-        <select id="catServerSelect" class="field-input">
-          <option value="">Connect the bot first&hellip;</option>
-        </select>
-      </div>
-
-      <div class="card">
-        <h2 class="card-title">Create a category</h2>
+      <div class="card layout-toolbar">
+        <label class="field-label" for="layoutServerSelect">Server</label>
         <div class="field-row">
-          <input type="text" id="catNameInput" class="field-input" placeholder="e.g. Voice Channels">
-          <button class="btn-primary" id="catCreateBtn">Create</button>
+          <select id="layoutServerSelect" class="field-input">
+            <option value="">Connect the bot first&hellip;</option>
+          </select>
+          <button class="btn-ghost" id="layoutReloadBtn" type="button" title="Reload from Discord">&#8635;</button>
         </div>
-        <p class="form-msg" id="catCreateMsg"></p>
+
+        <div class="layout-create">
+          <input type="text" id="layoutNewName" class="field-input" placeholder="New channel or category name" maxlength="100">
+          <select id="layoutNewType" class="field-input" aria-label="Type">
+            <option value="text">Text</option>
+            <option value="voice">Voice</option>
+            <option value="stage">Stage</option>
+            <option value="forum">Forum</option>
+            <option value="category">Category</option>
+          </select>
+          <select id="layoutNewCategory" class="field-input" aria-label="Category">
+            <option value="">No category</option>
+          </select>
+          <button class="btn-primary" id="layoutCreateBtn">Create</button>
+        </div>
+
+        <div class="layout-options">
+          <input type="search" id="layoutFilter" class="field-input" placeholder="Filter channels&hellip;">
+          <label><span class="toggle-switch"><input type="checkbox" id="layoutAutoSave" checked><span class="toggle-slider"></span></span> Instant save</label>
+          <button class="btn-outline btn-small" id="layoutCollapseBtn" type="button">Collapse all</button>
+        </div>
+        <p class="field-hint">Keyboard: <span class="kbd">&uarr;</span> <span class="kbd">&darr;</span> select &middot; <span class="kbd">Alt</span>+<span class="kbd">&uarr;</span>/<span class="kbd">&darr;</span> move &middot; <span class="kbd">F2</span> rename &middot; <span class="kbd">Del</span> delete. Voice channels always sit under text ones inside a category &mdash; that's how Discord draws them.</p>
       </div>
 
-      <div class="card">
-        <h2 class="card-title">Existing categories</h2>
-        <p class="field-hint">Deleting a category doesn't delete the channels inside it &mdash; they just become uncategorized, same as in Discord.</p>
-        <div id="catList" class="mod-list"></div>
+      <div class="layout-tree" id="layoutTree">
+        <div class="lt-empty">Pick a server to load its layout.</div>
+      </div>
+
+      <div class="layout-dock">
+        <div class="layout-bar" id="layoutActionBar" hidden>
+          <span class="layout-bar-label" id="layoutSelLabel"></span>
+          <button class="lt-icon-btn" data-move="top" title="Move to top">&#10514;</button>
+          <button class="lt-icon-btn" data-move="up" title="Move up (Alt+&uarr;)">&#9650;</button>
+          <button class="lt-icon-btn" data-move="down" title="Move down (Alt+&darr;)">&#9660;</button>
+          <button class="lt-icon-btn" data-move="bottom" title="Move to bottom">&#10515;</button>
+          <span class="layout-sep"></span>
+          <select class="field-input" id="layoutMoveTo" aria-label="Move into category"></select>
+          <button class="btn-outline btn-small" id="layoutSyncBtn" title="Copy the category's permissions onto this channel">Sync perms</button>
+          <button class="btn-outline btn-small" id="layoutRenameBtn">Rename</button>
+          <button class="btn-outline btn-small" id="layoutCloneBtn">Clone</button>
+          <button class="btn-outline btn-small" id="layoutDeleteBtn">Delete</button>
+        </div>
+        <div class="layout-bar" id="layoutSaveBar" hidden>
+          <span class="layout-bar-label" id="layoutSaveLabel"><span class="saving-dot"></span>Saved</span>
+          <button class="btn-outline btn-small" id="layoutSortBtn" title="Sort every category A&rarr;Z">Sort A&rarr;Z</button>
+          <button class="btn-outline btn-small" id="layoutDiscardBtn">Discard</button>
+          <button class="btn-primary btn-small" id="layoutSaveBtn">Save layout</button>
+        </div>
       </div>
     </section>
 
@@ -1022,6 +1017,8 @@
 
   </div>
 </div>
+
+<div class="toast-stack" id="toastStack"></div>
 
 <script src="{{ url_for('static', filename='script.js') }}"></script>
 </body>
