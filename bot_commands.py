@@ -42,6 +42,7 @@ import discord
 import bot_emoji
 import bot_layout
 import bot_music
+import bot_obf
 import bot_rp
 import bot_sounds
 import bot_stickers
@@ -543,23 +544,297 @@ _POLL_NUMBER_EMOJIS = ["1\N{combining enclosing keycap}", "2\N{combining enclosi
                        "7\N{combining enclosing keycap}", "8\N{combining enclosing keycap}", "9\N{combining enclosing keycap}", "\U0001F51F"]
 
 
+_POLL_MAX_OPTIONS = 10
+_POLL_MIN_SECONDS = 10
+_POLL_MAX_SECONDS = 7 * 86400  # one week
+_POLL_DURATION_UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+_POLL_DURATION_RE = re.compile(r"(\d+)\s*([smhd])", re.IGNORECASE)
+
+
+def _parse_duration(text: str) -> int | None:
+    """'30s', '10m', '1h30m', '2d', or a bare number of seconds -> seconds.
+
+    Returns None if `text` isn't a duration (so the caller can tell the user
+    the time is required).
+    """
+    text = text.strip().lower()
+    if not text:
+        return None
+    if text.isdigit():
+        return int(text)
+    total, matched = 0, False
+    for num, unit in _POLL_DURATION_RE.findall(text):
+        matched = True
+        total += int(num) * _POLL_DURATION_UNITS[unit]
+    return total if matched else None
+
+
+class _PollView(discord.ui.View):
+    """A button-based, time-limited poll — one vote per person, re-clickable
+    to change your choice. Each vote is confirmed with an ephemeral reply, so
+    only the voter sees it; the public message shows live tallies, and when
+    the timer runs out the buttons lock and a winner is announced."""
+
+    def __init__(self, question: str, options: list, deadline_ts: int, author_id: int):
+        super().__init__(timeout=max(1, deadline_ts - int(time.time())))
+        self.question = question
+        self.options = options
+        self.deadline_ts = deadline_ts
+        self.author_id = author_id
+        self.votes: dict[int, int] = {}  # user id -> option index
+        self.message = None
+        self.closed = False
+        for i, opt in enumerate(options):
+            button = discord.ui.Button(
+                label=opt[:80] or f"Option {i + 1}",
+                emoji=_POLL_NUMBER_EMOJIS[i],
+                style=discord.ButtonStyle.secondary,
+                row=i // 5,
+            )
+            button.callback = self._make_callback(i)
+            self.add_item(button)
+
+    def _counts(self) -> list:
+        counts = [0] * len(self.options)
+        for idx in self.votes.values():
+            counts[idx] += 1
+        return counts
+
+    def build_embed(self) -> discord.Embed:
+        counts = self._counts()
+        total = sum(counts)
+        lines = []
+        for i, opt in enumerate(self.options):
+            c = counts[i]
+            filled = round((c / total) * 12) if total else 0
+            bar = "█" * filled + "░" * (12 - filled)
+            pct = round((c / total) * 100) if total else 0
+            lines.append(f"{_POLL_NUMBER_EMOJIS[i]} **{opt}**\n`{bar}` {c} ({pct}%)")
+        embed = _embed(title=f"📊 {self.question}", description="\n".join(lines))
+        if self.closed:
+            embed.set_footer(text=f"{total} vote(s) · Final results")
+        else:
+            embed.set_footer(text=f"{total} vote(s) · Tap a button to vote")
+            embed.description += f"\n\nEnds <t:{self.deadline_ts}:R>"
+        return embed
+
+    def _make_callback(self, index: int):
+        async def callback(interaction: discord.Interaction):
+            if self.closed:
+                await interaction.response.send_message("This poll has closed.", ephemeral=True)
+                return
+            self.votes[interaction.user.id] = index
+            # Update the public tally first, then privately confirm to the
+            # voter (only they can see this).
+            try:
+                await self.message.edit(embed=self.build_embed(), view=self)
+            except discord.HTTPException:
+                pass
+            await interaction.response.send_message(
+                f"Your vote is locked in for **{self.options[index]}** ✅ "
+                "(only you can see this — tap another option to change it).",
+                ephemeral=True,
+            )
+        return callback
+
+    async def close(self):
+        if self.closed:
+            return
+        self.closed = True
+        for item in self.children:
+            item.disabled = True
+        counts = self._counts()
+        embed = self.build_embed()
+        if sum(counts):
+            top = max(counts)
+            winners = [self.options[i] for i, c in enumerate(counts) if c == top]
+            label = "Winner" if len(winners) == 1 else "Tie"
+            embed.add_field(name=f"🏆 {label}", value=f"{' & '.join(winners)} — {top} vote(s)", inline=False)
+        else:
+            embed.add_field(name="Result", value="Nobody voted.", inline=False)
+        if self.message:
+            try:
+                await self.message.edit(embed=embed, view=self)
+            except discord.HTTPException:
+                pass
+
+    async def on_timeout(self):
+        await self.close()
+
+
 async def _cmd_poll(ctx: Ctx):
-    if not ctx.content or "|" not in ctx.content:
-        await ctx.send("Usage: `!poll Question? | Option 1 | Option 2 | ...` (up to 10 options)")
+    usage = (
+        "Usage: `!poll <time> <Question?> | Option 1 | Option 2 | ...`\n"
+        "A time is required — units `s`/`m`/`h`/`d`, e.g. `30s`, `10m`, `1h`, `2d`.\n"
+        "Example: `!poll 10m Best color? | Red | Blue | Green`"
+    )
+    if not ctx.args:
+        await ctx.send(usage)
         return
-    parts = [p.strip() for p in ctx.content.split("|") if p.strip()]
+    duration = _parse_duration(ctx.args[0])
+    if duration is None:
+        await ctx.send("You need to start with a time (e.g. `10m`).\n" + usage)
+        return
+    duration = max(_POLL_MIN_SECONDS, min(duration, _POLL_MAX_SECONDS))
+
+    # Everything after the leading time token is the question + options.
+    rest = ctx.content.split(None, 1)[1].strip() if len(ctx.content.split(None, 1)) > 1 else ""
+    if "|" not in rest:
+        await ctx.send("Add a question and at least 2 options separated by `|`.\n" + usage)
+        return
+    parts = [p.strip() for p in rest.split("|") if p.strip()]
     if len(parts) < 3:
-        await ctx.send("Usage: `!poll Question? | Option 1 | Option 2 | ...` (need a question and at least 2 options)")
+        await ctx.send("Need a question and at least 2 options.\n" + usage)
         return
-    question, options = parts[0], parts[1:11]
-    lines = [f"{_POLL_NUMBER_EMOJIS[i]} {opt}" for i, opt in enumerate(options)]
-    embed = _embed(title=question, description="\n".join(lines))
-    msg = await ctx.send(embed=embed)
-    for i in range(len(options)):
+    question, options = parts[0], parts[1:_POLL_MAX_OPTIONS + 1]
+
+    deadline_ts = int(time.time()) + duration
+    view = _PollView(question, options, deadline_ts, ctx.author.id)
+    view.message = await ctx.send(embed=view.build_embed(), view=view)
+
+
+_OBF_MAX_ATTACHMENT = 100_000
+
+
+def _strip_code_fence(text: str) -> str:
+    """Pull Lua out of a ```lua … ``` block if the user pasted one."""
+    text = text.strip()
+    if text.startswith("```"):
+        text = text[3:]
+        if "\n" in text:
+            first, body = text.split("\n", 1)
+            # Drop an opening language tag like ```lua / ```luau.
+            if first.strip().lower() in ("lua", "luau", "roblox", ""):
+                text = body
+        if text.rstrip().endswith("```"):
+            text = text.rstrip()[:-3]
+    return text.strip()
+
+
+def _safe_stem(name: str) -> str:
+    stem = "".join(c if (c.isalnum() or c in "-_") else "_" for c in name).strip("_")
+    return stem[:40] or "obfuscated"
+
+
+def _parse_obf_options(tokens: list):
+    """Read leading option tokens; stop at the first that isn't one (that's
+    where the inline script begins). Returns (opts, number_consumed)."""
+    opts = {"layers": 2, "names": True, "junk": False, "minify": False}
+    consumed = 0
+    for tok in tokens:
+        t = tok.lower()
+        if t == "junk":
+            opts["junk"] = True
+        elif t in ("plain", "nonames"):
+            opts["names"] = False
+        elif t in ("min", "minify"):
+            opts["minify"] = True
+        elif t.startswith("layers="):
+            try:
+                opts["layers"] = max(1, min(int(t.split("=", 1)[1]), 4))
+            except ValueError:
+                break
+        else:
+            break
+        consumed += 1
+    return opts, consumed
+
+
+class _ObfView(discord.ui.View):
+    """Posts a button; only the requester can click it, and the obfuscated
+    file is handed back as an *ephemeral* reply so nobody else can grab it."""
+
+    def __init__(self, author_id: int, data: bytes, filename: str, summary: str):
+        super().__init__(timeout=600)
+        self.author_id = author_id
+        self.data = data
+        self.filename = filename
+        self.summary = summary
+        self.message = None
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message(
+                "This obfuscation isn't yours — run `!obf` with your own script.",
+                ephemeral=True,
+            )
+            return False
+        return True
+
+    @discord.ui.button(label="Get my obfuscated file", emoji="📥", style=discord.ButtonStyle.primary)
+    async def grab(self, interaction: discord.Interaction, button: discord.ui.Button):
+        file = discord.File(io.BytesIO(self.data), filename=self.filename)
+        await interaction.response.send_message(
+            f"Here's your obfuscated Lua ({self.summary}) — only you can see this. "
+            "You can grab it again until this expires.",
+            file=file,
+            ephemeral=True,
+        )
+
+    async def on_timeout(self):
+        if self.message:
+            try:
+                await self.message.edit(content="⏱️ Obfuscation expired — run `!obf` again.", view=None)
+            except discord.HTTPException:
+                pass
+
+
+async def _cmd_obf(ctx: Ctx):
+    opts, consumed = _parse_obf_options(ctx.args)
+
+    # Source: an attached file wins; otherwise the pasted text after options.
+    stem = "obfuscated"
+    if ctx.message.attachments:
+        att = ctx.message.attachments[0]
+        if att.size > _OBF_MAX_ATTACHMENT:
+            await ctx.send(f"That file is too big — keep it under {_OBF_MAX_ATTACHMENT:,} bytes.")
+            return
+        raw = await att.read()
         try:
-            await msg.add_reaction(_POLL_NUMBER_EMOJIS[i])
-        except discord.HTTPException:
-            pass
+            source = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            source = raw.decode("latin-1")
+        stem = os.path.splitext(att.filename)[0]
+    else:
+        split = ctx.content.split(None, consumed)
+        source = _strip_code_fence(split[consumed] if len(split) > consumed else "")
+
+    if not source.strip():
+        await ctx.send(
+            "Usage: `!obf [layers=N] [junk] [plain] [min] <paste Lua or attach a .lua file>`\n"
+            "Works with any Lua/Luau (Roblox included). Example: `!obf layers=3 junk` with a `.lua` attached.\n"
+            "Options — `layers=1..4` (default 2), `junk` (add dead code), "
+            "`plain` (don't scramble names), `min` (strip comments first)."
+        )
+        return
+
+    try:
+        out = bot_obf.obfuscate(
+            source,
+            layers=opts["layers"], names=opts["names"],
+            junk=opts["junk"], minify=opts["minify"],
+        )
+    except ValueError as exc:
+        await ctx.send(f"Can't obfuscate: {exc}")
+        return
+
+    data = out.encode("utf-8")
+    filename = f"{_safe_stem(stem)}.obf.lua"
+    summary = f"{opts['layers']} layer(s), {len(data):,} bytes"
+
+    # The command message may contain the plaintext source — remove it so it
+    # isn't left sitting in the channel. Best-effort (needs Manage Messages).
+    try:
+        await ctx.message.delete()
+    except discord.HTTPException:
+        pass
+
+    view = _ObfView(ctx.author.id, data, filename, summary)
+    view.message = await ctx.channel.send(
+        f"🔒 {ctx.author.mention} — your Lua is obfuscated ({summary}). "
+        "Tap below to receive it; the file is sent so **only you** can see it.",
+        view=view,
+    )
 
 
 async def _cmd_channelinfo(ctx: Ctx):
@@ -725,7 +1000,8 @@ UTILITY_COMMANDS = {
     "color": CommandSpec("Shows a color swatch for a hex code.", _cmd_color, None, "utility"),
     "timestamp": CommandSpec("Converts a unix timestamp to a Discord date/time tag.", _cmd_timestamp, None, "utility"),
     "invite": CommandSpec("Gives you a link to invite this bot to another server.", _cmd_invite, None, "utility"),
-    "poll": CommandSpec("Posts a quick reaction poll.", _cmd_poll, None, "utility"),
+    "poll": CommandSpec("Posts a timed, button-based poll with live results.", _cmd_poll, None, "utility"),
+    "obf": CommandSpec("Obfuscates a Lua/Roblox script; sends it back as a file only you can see.", _cmd_obf, None, "utility"),
     "channelinfo": CommandSpec("Shows info about the current channel.", _cmd_channelinfo, None, "utility"),
     "roleinfo": CommandSpec("Shows info about a role.", _cmd_roleinfo, None, "utility"),
     "permissions": CommandSpec("Shows your (or @mention's) key permissions.", _cmd_permissions, None, "utility"),
@@ -971,27 +1247,42 @@ async def _cmd_clearwarnings(ctx: Ctx):
     await ctx.send(f"Cleared warnings for **{target}**.")
 
 
+_PURGE_MAX = 1000
+
+
 async def _cmd_purge(ctx: Ctx):
     if not await _check_perm(ctx, "manage_messages"):
         return
     if not ctx.args:
-        await ctx.send("Usage: `!purge <count>` (max 100)")
+        await ctx.send(f"Usage: `!purge <count>` (1–{_PURGE_MAX})")
         return
     try:
         count = int(ctx.args[0])
     except ValueError:
         await ctx.send("Count must be a number.")
         return
-    count = max(1, min(count, 100))
+    count = max(1, min(count, _PURGE_MAX))
     try:
-        deleted = await ctx.channel.purge(limit=count + 1)
-        note = await ctx.channel.send(f"Deleted {max(len(deleted) - 1, 0)} message(s).")
+        # channel.purge() already does the fast path: it removes messages in
+        # batches of 100 through Discord's *bulk* delete endpoint (one API
+        # call per 100), paginating automatically — so a large count is a
+        # handful of calls, not one-per-message. It only falls back to slow
+        # single deletes for messages older than 14 days, which Discord's
+        # bulk endpoint refuses to touch. The +1 sweeps up the command
+        # message itself.
+        deleted = await ctx.channel.purge(limit=count + 1, bulk=True)
+        shown = max(len(deleted) - 1, 0)
+        note = await ctx.channel.send(f"🧹 Deleted {shown} message(s).")
         await asyncio.sleep(4)
         await note.delete()
     except discord.Forbidden:
         await ctx.send("I need Manage Messages here to do that.")
     except discord.HTTPException as exc:
-        await ctx.send(f"Couldn't purge: {exc.text}")
+        # The usual cause of a partial purge is messages older than 14 days.
+        await ctx.send(
+            f"Couldn't finish the purge: {exc.text}. "
+            "Note Discord won't bulk-delete messages older than 14 days."
+        )
 
 
 async def _cmd_slowmode(ctx: Ctx):
