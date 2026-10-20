@@ -15,9 +15,10 @@
 #          https://raw.githubusercontent.com/iamdookie1/discord-bot/main/start.sh \
 #          -o start.sh && bash start.sh
 #
-#   B) EVERY TIME AFTER, once you have the repo — from inside it just run:
+#   B) EVERY TIME AFTER — the first run installs a `bot` command into your
+#      shell, so from anywhere (no cd, no path) just type:
 #
-#        bash start.sh
+#        bot
 #
 # Repeat launches take a fast path: if the dependencies haven't changed
 # since the last successful setup, the whole package-checking phase is
@@ -111,6 +112,30 @@ else
   fi
 fi
 
-# --- 3. Launch ----------------------------------------------------------
+# --- 3. Install a one-word `bot` shortcut -------------------------------
+# So you never have to cd here and type `bash start.sh` again — after this,
+# just type `bot` from anywhere. Idempotent: added once, points at the
+# absolute path of this checkout.
+install_shortcut() {
+  rc="$1"
+  grep -q "# >>> control-deck shortcut >>>" "$rc" 2>/dev/null && return 0
+  {
+    echo ""
+    echo "# >>> control-deck shortcut >>>"
+    echo "bot() { bash \"$DIR/start.sh\" \"\$@\"; }"
+    echo "# <<< control-deck shortcut <<<"
+  } >> "$rc" 2>/dev/null || return 0
+  echo "==> Added a 'bot' command to $rc — next time just type:  bot"
+  echo "    (run 'source $rc' once, or reopen Termux, to use it right now)"
+}
+
+# bash is Termux's default shell; create ~/.bashrc if it's missing so the
+# shortcut has somewhere to live. Also add it to zsh if that's set up.
+touch "$HOME/.bashrc" 2>/dev/null || true
+for rc in "$HOME/.bashrc" "$HOME/.zshrc"; do
+  [ -f "$rc" ] && install_shortcut "$rc"
+done
+
+# --- 4. Launch ----------------------------------------------------------
 echo "==> Starting Control Deck..."
 python run.py
