@@ -888,10 +888,7 @@ async def _cmd_obf(ctx: Ctx):
         source = _strip_code_fence(ctx.content)
 
     if not source.strip():
-        await ctx.send(
-            "Attach a `.lua`/`.txt` file (or paste a ```lua``` block) with `!obf` and I'll open a "
-            "private configurator where you pick the options. Works with any Lua/Luau (Roblox too)."
-        )
+        await ctx.send("attach a .lua file with !obf to get started")
         return
 
     # Insta-delete the original so the plaintext isn't left in the channel —
