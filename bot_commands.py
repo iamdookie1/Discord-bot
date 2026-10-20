@@ -716,74 +716,163 @@ def _safe_stem(name: str) -> str:
     return stem[:40] or "obfuscated"
 
 
-def _parse_obf_options(tokens: list):
-    """Read leading option tokens; stop at the first that isn't one (that's
-    where the inline script begins). Returns (opts, number_consumed)."""
-    opts = {"layers": 2, "names": True, "junk": False, "minify": False}
-    consumed = 0
-    for tok in tokens:
-        t = tok.lower()
-        if t == "junk":
-            opts["junk"] = True
-        elif t in ("plain", "nonames"):
-            opts["names"] = False
-        elif t in ("min", "minify"):
-            opts["minify"] = True
-        elif t.startswith("layers="):
-            try:
-                opts["layers"] = max(1, min(int(t.split("=", 1)[1]), 4))
-            except ValueError:
-                break
-        else:
-            break
-        consumed += 1
-    return opts, consumed
+_OBF_LAYER_CHOICES = (1, 2, 3, 4)
 
 
-class _ObfView(discord.ui.View):
-    """Posts a button; only the requester can click it, and the obfuscated
-    file is handed back as an *ephemeral* reply so nobody else can grab it."""
+class _ObfConfigView(discord.ui.View):
+    """The private configurator. It lives only inside the requester's
+    ephemeral message, so every control and the finished file are visible to
+    nobody else. Each toggle edits this same panel in place; **Obfuscate**
+    runs the current settings and returns the file as another ephemeral
+    reply, leaving the panel open so they can tweak and re-run."""
 
-    def __init__(self, author_id: int, data: bytes, filename: str, summary: str):
-        super().__init__(timeout=600)
+    def __init__(self, author_id: int, source: str, stem: str):
+        super().__init__(timeout=900)
         self.author_id = author_id
-        self.data = data
-        self.filename = filename
-        self.summary = summary
+        self.source = source
+        self.stem = stem
+        # Defaults, all adjustable below.
+        self.layers = 2
+        self.names = True
+        self.junk = False
+        self.minify = False
+        self._rebuild()
+
+    # Ephemeral messages can only be interacted with by their recipient, so
+    # this is belt-and-suspenders — but it keeps a stray routed event safe.
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        return interaction.user.id == self.author_id
+
+    def _rebuild(self):
+        """Re-draw every control so labels/defaults reflect current state."""
+        self.clear_items()
+
+        layer_select = discord.ui.Select(
+            placeholder=f"Layers: {self.layers}", min_values=1, max_values=1, row=0,
+            options=[
+                discord.SelectOption(
+                    label=f"{n} layer{'s' if n > 1 else ''}",
+                    value=str(n), default=(n == self.layers),
+                    description={1: "fastest / smallest", 4: "heaviest / biggest"}.get(n),
+                )
+                for n in _OBF_LAYER_CHOICES
+            ],
+        )
+        layer_select.callback = self._on_layers
+        self.add_item(layer_select)
+
+        self.add_item(self._toggle("names", "Scramble names", self.names))
+        self.add_item(self._toggle("junk", "Junk code", self.junk))
+        self.add_item(self._toggle("minify", "Strip comments", self.minify))
+
+        go = discord.ui.Button(label="Obfuscate", emoji="🔒", style=discord.ButtonStyle.success, row=2)
+        go.callback = self._on_go
+        self.add_item(go)
+        cancel = discord.ui.Button(label="Cancel", style=discord.ButtonStyle.secondary, row=2)
+        cancel.callback = self._on_cancel
+        self.add_item(cancel)
+
+    def _toggle(self, attr: str, label: str, state: bool) -> discord.ui.Button:
+        button = discord.ui.Button(
+            label=f"{label}: {'On' if state else 'Off'}", row=1,
+            style=discord.ButtonStyle.primary if state else discord.ButtonStyle.secondary,
+        )
+
+        async def callback(interaction: discord.Interaction):
+            setattr(self, attr, not getattr(self, attr))
+            self._rebuild()
+            await interaction.response.edit_message(embed=self.embed(), view=self)
+
+        button.callback = callback
+        return button
+
+    def embed(self) -> discord.Embed:
+        size = len(self.source.encode("utf-8"))
+        embed = _embed(
+            title="🔧 Obfuscator",
+            description=("Set these however you like, then tap **Obfuscate**.\n"
+                         "This panel — and the file you get back — are visible only to you."),
+        )
+        embed.add_field(name="Layers", value=str(self.layers), inline=True)
+        embed.add_field(name="Scramble names", value="On" if self.names else "Off", inline=True)
+        embed.add_field(name="Junk code", value="On" if self.junk else "Off", inline=True)
+        embed.add_field(name="Strip comments", value="On" if self.minify else "Off", inline=True)
+        embed.add_field(name="Script", value=f"`{self.stem}` · {size:,} bytes", inline=True)
+        return embed
+
+    async def _on_layers(self, interaction: discord.Interaction):
+        self.layers = int(interaction.data["values"][0])
+        self._rebuild()
+        await interaction.response.edit_message(embed=self.embed(), view=self)
+
+    async def _on_go(self, interaction: discord.Interaction):
+        # Ack immediately (3s limit), then do the CPU work off the event loop
+        # so a big script with many layers can't stall the bot.
+        await interaction.response.defer()
+        try:
+            out = await asyncio.get_running_loop().run_in_executor(
+                None,
+                lambda: bot_obf.obfuscate(
+                    self.source, layers=self.layers, names=self.names,
+                    junk=self.junk, minify=self.minify,
+                ),
+            )
+        except ValueError as exc:
+            await interaction.followup.send(f"Can't obfuscate: {exc}", ephemeral=True)
+            return
+        data = out.encode("utf-8")
+        file = discord.File(io.BytesIO(data), filename=f"{_safe_stem(self.stem)}.obf.lua")
+        await interaction.followup.send(
+            f"🔒 Done — {self.layers} layer(s), {len(data):,} bytes. Only you can see this. "
+            "Change any setting above and tap **Obfuscate** again for another version.",
+            file=file, ephemeral=True,
+        )
+
+    async def _on_cancel(self, interaction: discord.Interaction):
+        self.stop()
+        await interaction.response.edit_message(content="Cancelled.", embed=None, view=None)
+
+
+class _ObfOpenView(discord.ui.View):
+    """The one public message `!obf` leaves behind: a single button that opens
+    the requester's private configurator. A prefix command can't reply
+    ephemerally on its own, so this button is the doorway into the ephemeral
+    flow — and only the requester can use it."""
+
+    def __init__(self, author_id: int, source: str, stem: str):
+        super().__init__(timeout=900)
+        self.author_id = author_id
+        self.source = source
+        self.stem = stem
         self.message = None
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.author_id:
             await interaction.response.send_message(
-                "This obfuscation isn't yours — run `!obf` with your own script.",
+                "This isn't yours — run `!obf` with your own script to get your own configurator.",
                 ephemeral=True,
             )
             return False
         return True
 
-    @discord.ui.button(label="Get my obfuscated file", emoji="📥", style=discord.ButtonStyle.primary)
-    async def grab(self, interaction: discord.Interaction, button: discord.ui.Button):
-        file = discord.File(io.BytesIO(self.data), filename=self.filename)
-        await interaction.response.send_message(
-            f"Here's your obfuscated Lua ({self.summary}) — only you can see this. "
-            "You can grab it again until this expires.",
-            file=file,
-            ephemeral=True,
-        )
+    @discord.ui.button(label="Configure & obfuscate", emoji="🔧", style=discord.ButtonStyle.primary)
+    async def open_panel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        view = _ObfConfigView(self.author_id, self.source, self.stem)
+        await interaction.response.send_message(embed=view.embed(), view=view, ephemeral=True)
 
     async def on_timeout(self):
         if self.message:
             try:
-                await self.message.edit(content="⏱️ Obfuscation expired — run `!obf` again.", view=None)
+                await self.message.edit(content="⏱️ Expired — run `!obf` again.", view=None)
             except discord.HTTPException:
                 pass
 
 
 async def _cmd_obf(ctx: Ctx):
-    opts, consumed = _parse_obf_options(ctx.args)
-
-    # Source: an attached file wins; otherwise the pasted text after options.
+    # Capture the source first (file preferred, else pasted text), because the
+    # next thing we do is delete the original message.
     stem = "obfuscated"
+    source = ""
     if ctx.message.attachments:
         att = ctx.message.attachments[0]
         if att.size > _OBF_MAX_ATTACHMENT:
@@ -796,43 +885,26 @@ async def _cmd_obf(ctx: Ctx):
             source = raw.decode("latin-1")
         stem = os.path.splitext(att.filename)[0]
     else:
-        split = ctx.content.split(None, consumed)
-        source = _strip_code_fence(split[consumed] if len(split) > consumed else "")
+        source = _strip_code_fence(ctx.content)
 
     if not source.strip():
         await ctx.send(
-            "Usage: `!obf [layers=N] [junk] [plain] [min] <paste Lua or attach a .lua file>`\n"
-            "Works with any Lua/Luau (Roblox included). Example: `!obf layers=3 junk` with a `.lua` attached.\n"
-            "Options — `layers=1..4` (default 2), `junk` (add dead code), "
-            "`plain` (don't scramble names), `min` (strip comments first)."
+            "Attach a `.lua`/`.txt` file (or paste a ```lua``` block) with `!obf` and I'll open a "
+            "private configurator where you pick the options. Works with any Lua/Luau (Roblox too)."
         )
         return
 
-    try:
-        out = bot_obf.obfuscate(
-            source,
-            layers=opts["layers"], names=opts["names"],
-            junk=opts["junk"], minify=opts["minify"],
-        )
-    except ValueError as exc:
-        await ctx.send(f"Can't obfuscate: {exc}")
-        return
-
-    data = out.encode("utf-8")
-    filename = f"{_safe_stem(stem)}.obf.lua"
-    summary = f"{opts['layers']} layer(s), {len(data):,} bytes"
-
-    # The command message may contain the plaintext source — remove it so it
-    # isn't left sitting in the channel. Best-effort (needs Manage Messages).
+    # Insta-delete the original so the plaintext isn't left in the channel —
+    # we already have it in memory. Best-effort (needs Manage Messages).
     try:
         await ctx.message.delete()
     except discord.HTTPException:
         pass
 
-    view = _ObfView(ctx.author.id, data, filename, summary)
+    view = _ObfOpenView(ctx.author.id, source, stem)
     view.message = await ctx.channel.send(
-        f"🔒 {ctx.author.mention} — your Lua is obfuscated ({summary}). "
-        "Tap below to receive it; the file is sent so **only you** can see it.",
+        f"🔒 {ctx.author.mention} — your Lua is ready. Tap to open your **private** configurator "
+        "(only you can see and use it).",
         view=view,
     )
 
