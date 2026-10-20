@@ -10,6 +10,7 @@ package check always happens first:
     python run.py
 """
 import importlib
+import importlib.util
 import os
 import subprocess
 import sys
@@ -57,11 +58,18 @@ YT_DLP_CHECK_INTERVAL = 6 * 60 * 60
 
 
 def _missing(packages):
+    # Use find_spec (just *locates* the module) instead of import_module
+    # (which actually *executes* it). Several of these — discord, yt_dlp,
+    # bs4 — pull in a lot of code on import, so importing all ~17 purely to
+    # check they're present added a noticeable delay to every launch on a
+    # phone. find_spec confirms a package is installed without that cost.
     missing = []
     for import_name, pip_name in packages:
         try:
-            importlib.import_module(import_name)
-        except ImportError:
+            found = importlib.util.find_spec(import_name) is not None
+        except (ImportError, ValueError):
+            found = False
+        if not found:
             missing.append(pip_name)
     return missing
 
