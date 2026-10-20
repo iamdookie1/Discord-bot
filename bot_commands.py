@@ -855,7 +855,7 @@ class _ObfOpenView(discord.ui.View):
             return False
         return True
 
-    @discord.ui.button(label="Configure & obfuscate", emoji="🔧", style=discord.ButtonStyle.primary)
+    @discord.ui.button(label="Start", style=discord.ButtonStyle.primary)
     async def open_panel(self, interaction: discord.Interaction, button: discord.ui.Button):
         view = _ObfConfigView(self.author_id, self.source, self.stem)
         await interaction.response.send_message(embed=view.embed(), view=view, ephemeral=True)
@@ -901,12 +901,10 @@ async def _cmd_obf(ctx: Ctx):
     except discord.HTTPException:
         pass
 
+    # Just the button, no surrounding text. Only the creator can use it
+    # (enforced by _ObfOpenView.interaction_check).
     view = _ObfOpenView(ctx.author.id, source, stem)
-    view.message = await ctx.channel.send(
-        f"🔒 {ctx.author.mention} — your Lua is ready. Tap to open your **private** configurator "
-        "(only you can see and use it).",
-        view=view,
-    )
+    view.message = await ctx.channel.send(view=view)
 
 
 async def _cmd_channelinfo(ctx: Ctx):

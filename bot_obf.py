@@ -222,7 +222,7 @@ def obfuscate(source: str, *, layers: int = 2, names: bool = True,
     for _ in range(layers):
         current = _encode_layer(current, rng, names=names, junk=junk).encode("utf-8")
 
-    result = "-- Obfuscated with Control Deck\n" + current.decode("utf-8")
+    result = current.decode("utf-8")
     if len(result.encode("utf-8")) > MAX_OUTPUT_BYTES:
         raise ValueError("obfuscated output is too large to upload — use fewer layers.")
     return result
