@@ -6,7 +6,9 @@ local web UI at `http://127.0.0.1:5000` instead of the command line.
 ## What's in here
 
 - `setup.sh` — Termux system-package check (installs anything missing), then launches the app
-- `run.py` — checks/installs the required **Python** packages, then starts the server
+- `run.py` — checks/installs the required **Python** packages, then asks which platform to run (Discord or Yapper) and starts it
+- `yapper.py` — vendored, standard-library-only client for [Yapper](https://www.yapper.website) (its own API, not Discord)
+- `yapper_bot.py` — the Yapper build of the bot (utility + moderation commands, a timed button poll, inline `!obf`)
 - `app.py` — the Flask app: all the `/api/...` routes the UI talks to
 - `bot_manager.py` — runs the actual discord.py client in the background, plus the web moderation panel's actions (kick/ban/timeout/warn/etc., mirroring the chat commands)
 - `bot_commands.py` — utility + moderation `!commands`, on/off toggle storage, per-user command cooldowns, and the custom-command sandbox
@@ -43,7 +45,12 @@ bash setup.sh
 1. Pull the latest changes from GitHub (`git pull`) — skipped automatically if you're offline or aren't running from a git checkout
 2. Make sure the Termux system packages `python`, `git`, `libffi`, `openssl` are present (installs any that are missing) — `pkg update` only actually runs if something's missing, not on every launch, so a repeat launch with everything already installed is fast
 3. Run `run.py`, which checks whether `flask` and `discord.py` are installed in Python and installs whichever are missing
-4. Start the server and print `http://127.0.0.1:5000`
+4. Ask which platform to run — **1) Discord** (the web Control Deck UI) or **2) Yapper**. It defaults to Discord, and you can skip the prompt with `BOT_PLATFORM=discord` or `BOT_PLATFORM=yapper`.
+5. Start the server and print `http://127.0.0.1:5000` (Discord), or connect the Yapper bot (see below)
+
+### Yapper
+
+Picking **Yapper** runs `yapper_bot.py` against [yapper.website](https://www.yapper.website) instead of Discord. It asks for your Yapper bot token (starts with `yb_`, from Yapper → Settings → Developer) and offers to save it to `config.json` so you only paste it once; you can also set `YAPPER_BOT_TOKEN`. Yapper is a different platform with its own API, so this build has its own command set — `!ping`, `!say`, `!roll`, `!8ball`, `!choose`, `!calc`, `!uuid`, `!password`, `!base64`, `!hash`, `!poll` (timed button poll with private vote confirmations), `!obf` (inline, 1 layer — Yapper's bot API can't upload files, so large scripts and the file/configurator flow stay Discord-only), and `!purge`. The Yapper client needs no extra packages (it's one standard-library file).
 
 Each step prints a short `==>` line as it happens, so a launch never looks
 stuck with no feedback — even when nothing needs installing, you still see

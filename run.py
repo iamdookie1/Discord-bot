@@ -147,8 +147,34 @@ def check_and_install():
             pass
 
 
+def _choose_platform():
+    """Ask which platform to run. BOT_PLATFORM=discord|yapper skips the prompt
+    (handy for a headless launch); otherwise it's a simple 1/2 menu that
+    defaults to Discord."""
+    env = os.environ.get("BOT_PLATFORM", "").strip().lower()
+    if env in ("discord", "yapper"):
+        return env
+    print()
+    print("Which platform do you want to run?")
+    print("  1) Discord  - the web Control Deck UI")
+    print("  2) Yapper   - yapper.website")
+    try:
+        choice = input("Pick 1 or 2 [1]: ").strip().lower()
+    except EOFError:
+        choice = ""
+    return "yapper" if choice in ("2", "yapper", "y") else "discord"
+
+
 def main():
     check_and_install()
+
+    if _choose_platform() == "yapper":
+        # Vendored single-file library, standard-library only — nothing to
+        # install. yapper_bot handles its own token and event loop.
+        import yapper_bot  # noqa: E402
+        yapper_bot.main()
+        return
+
     # Import after the check so we never hit an ImportError above this line.
     from app import app  # noqa: E402
 
