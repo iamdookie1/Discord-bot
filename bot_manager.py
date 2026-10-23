@@ -13,6 +13,7 @@ import discord
 import bot_backup
 import bot_commands
 import bot_layout
+import bot_layout_import
 import bot_tts
 import guild_settings
 from theme import EMBED_COLOR
@@ -628,6 +629,30 @@ class BotManager:
             return {"ok": True}
 
         result = self._run_coro(_do(), default=None, timeout=30)
+        return result or {"ok": False, "error": "Bot isn't connected (or Discord took too long)."}
+
+    def import_layout(self, guild_id: str, text: str, replace_all: bool = False) -> dict:
+        """Build a server's channels/categories from a .layout file's JSON.
+
+        Creating many channels is a lot of API calls, so this gets a long
+        timeout; the bulk-delete when replacing takes a while too."""
+        try:
+            spec = bot_layout_import.parse_spec(text)
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+
+        async def _do():
+            guild = self.client.get_guild(int(guild_id))
+            if not guild:
+                return {"ok": False, "error": "Server not found — is the bot still in it?"}
+            if not guild.me.guild_permissions.manage_channels:
+                return {"ok": False, "error": "I need the Manage Channels permission in that server."}
+            try:
+                return await bot_layout_import.apply_import(guild, spec, replace_all=replace_all)
+            except discord.HTTPException as exc:
+                return {"ok": False, "error": f"Discord refused that: {exc.text or exc}"}
+
+        result = self._run_coro(_do(), default=None, timeout=300)
         return result or {"ok": False, "error": "Bot isn't connected (or Discord took too long)."}
 
     def clone_channel(self, guild_id: str, channel_id: str) -> dict:

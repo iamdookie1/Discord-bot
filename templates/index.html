@@ -845,6 +845,20 @@
         <p class="field-hint">Keyboard: <span class="kbd">&uarr;</span> <span class="kbd">&darr;</span> select &middot; <span class="kbd">Alt</span>+<span class="kbd">&uarr;</span>/<span class="kbd">&darr;</span> move &middot; <span class="kbd">F2</span> rename &middot; <span class="kbd">Del</span> delete. Voice channels always sit under text ones inside a category &mdash; that's how Discord draws them.</p>
       </div>
 
+      <div class="card layout-import">
+        <h2 class="card-title">Import a <code>.layout</code> file</h2>
+        <p class="field-hint">A JSON file describing categories, text/voice channels, what's parented where, and what's locked. Channels are created into the <strong>server picked above</strong>. Locked items get a read-only (or no-connect) <code>@everyone</code> overwrite on creation; a channel in a locked category inherits it.</p>
+        <div class="field-row">
+          <input type="file" id="layoutImportFile" class="field-input" accept=".layout,.json,application/json">
+          <button class="btn-outline btn-small" id="layoutImportSampleBtn" type="button" title="Download an example .layout file">Example file</button>
+        </div>
+        <label class="layout-import-replace"><span class="toggle-switch"><input type="checkbox" id="layoutImportReplace"><span class="toggle-slider"></span></span> Replace everything (delete all existing channels first)</label>
+        <div class="btn-row">
+          <button class="btn-primary" id="layoutImportBtn" disabled>Import layout</button>
+        </div>
+        <p class="form-msg" id="layoutImportMsg"></p>
+      </div>
+
       <div class="layout-tree" id="layoutTree">
         <div class="lt-empty">Pick a server to load its layout.</div>
       </div>

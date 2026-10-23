@@ -2959,6 +2959,104 @@ const layoutEditor = (() => {
   return { open };
 })();
 
+// ---------- layout import (.layout file -> build channels) ----------
+// Reuses the Layout tab's server dropdown; reads the chosen file, POSTs its
+// text to /api/layout/import, and reports what got created.
+
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const fileInput = $("layoutImportFile");
+  const replace = $("layoutImportReplace");
+  const importBtn = $("layoutImportBtn");
+  const sampleBtn = $("layoutImportSampleBtn");
+  const msg = $("layoutImportMsg");
+  const server = $("layoutServerSelect");
+  if (!fileInput || !importBtn) return;
+
+  let fileText = "";
+
+  const refresh = () => { importBtn.disabled = !(fileText && server && server.value); };
+
+  fileInput.addEventListener("change", async () => {
+    const file = fileInput.files && fileInput.files[0];
+    fileText = "";
+    if (file) {
+      try {
+        fileText = await file.text();
+      } catch (_) {
+        setMsg(msg, "Couldn't read that file.", "error");
+      }
+    }
+    refresh();
+  });
+  if (server) server.addEventListener("change", refresh);
+
+  importBtn.addEventListener("click", async () => {
+    if (!fileText) return;
+    if (replace.checked &&
+        !confirm("Delete ALL existing channels and categories on this server, then build the file? This can't be undone.")) {
+      return;
+    }
+    importBtn.disabled = true;
+    setMsg(msg, replace.checked ? "Clearing the server and building…" : "Building channels…", "");
+    let res;
+    try {
+      res = await api("/api/layout/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ guild_id: server.value, text: fileText, replace_all: replace.checked }),
+      });
+    } catch (_) {
+      res = { ok: false, error: "Request failed — is the bot online?" };
+    }
+    refresh();
+    if (!res.ok) {
+      setMsg(msg, res.error || "Import failed.", "error");
+      toast(res.error || "Import failed.", "error");
+      return;
+    }
+    const bits = [];
+    if (res.deleted) bits.push(`deleted ${res.deleted}`);
+    bits.push(`${res.categories} categor${res.categories === 1 ? "y" : "ies"}`);
+    bits.push(`${res.channels} channel${res.channels === 1 ? "" : "s"}`);
+    let line = "Imported: " + bits.join(", ") + ".";
+    if (res.errors && res.errors.length) line += ` ${res.errors.length} issue(s): ` + res.errors.slice(0, 3).join("; ");
+    setMsg(msg, line, res.errors && res.errors.length ? "error" : "success");
+    toast("Layout imported.", "success");
+    // Refresh the tree so the new channels show up in the editor.
+    if (typeof layoutEditor !== "undefined" && layoutEditor.open) layoutEditor.open();
+  });
+
+  sampleBtn.addEventListener("click", () => {
+    const sample = {
+      name: "Example Server",
+      categories: [
+        { name: "Information", locked: true, channels: [
+          { name: "rules", type: "text", locked: true },
+          { name: "announcements", type: "text" },
+        ] },
+        { name: "General", channels: [
+          { name: "general", type: "text" },
+          { name: "memes", type: "text" },
+          { name: "Lounge", type: "voice" },
+          { name: "AFK", type: "voice", locked: true },
+        ] },
+        { name: "Staff", private: true, channels: [
+          { name: "staff-chat", type: "text" },
+          { name: "Staff VC", type: "voice" },
+        ] },
+      ],
+      uncategorized: [{ name: "welcome", type: "text" }],
+    };
+    const blob = new Blob([JSON.stringify(sample, null, 2)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "example.layout";
+    a.click();
+    URL.revokeObjectURL(a.href);
+  });
+})();
+
 // ---------- fonts tab ----------
 
 let fontsInitialized = false;

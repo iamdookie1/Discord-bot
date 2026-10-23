@@ -23,6 +23,7 @@ local web UI at `http://127.0.0.1:5000` instead of the command line.
 - `guild_settings.py` — per-server settings (RP-allowed channel, music channel, mod-log channel, mute role), keyed by guild ID
 - `bot_backup.py` — server structure snapshot/restore for the Backup tab (web UI only, no chat command)
 - `bot_layout.py` — server layout editing (channel order, categories) shared by the web UI's Layout tab, the interactive `!layout` editor, and the quick `!movech`/`!setcat`/... commands
+- `bot_layout_import.py` — builds a server's categories/channels from an imported `.layout` JSON file (parenting + locking + optional "replace everything")
 - `theme.py` — the shared embed color, so everything the bot posts matches the web UI's void-black/violet theme
 - `templates/`, `static/` — the UI (Home, Text, Bot, Music, Cmds, Custom, Mod, Layout, Fonts, RP, Backup, Servers tabs)
 - `config.json` — created automatically the first time you save a token or set a presence (kept only on your device)
@@ -140,6 +141,25 @@ Open `http://127.0.0.1:5000` in your phone's browser. The whole UI uses a void-b
 - **Instant save** (on by default) pushes every change to Discord a moment after you make it; turn it off to rearrange freely and hit **Save layout** once (with a Discard button and an unsaved-change counter). Either way the entire layout goes out as **one** bulk request instead of one edit per channel, so big rearrangements are fast and don't hit rate limits.
 - **Create** text/voice/stage/forum channels or categories from the toolbar, **filter** channels by name, **collapse** categories (remembered), and **Sort A→Z** every category in one click.
 - Inside a category, Discord always draws voice/stage channels below text-style ones regardless of position numbers, so the editor keeps them that way too — dragging a voice channel between two text channels just drops it at the top of the voice block.
+
+**Import a `.layout` file** — below the tree there's an importer that builds a whole server from a JSON file:
+- A `.layout` file is just JSON describing categories ("tabs"), text/voice channels, what's parented where, and what's locked. Pick a server up top, choose the file, and hit **Import layout** — the channels are created on that server. The **Example file** button downloads a working sample to edit.
+- **Parenting** is structural: a channel listed inside a category's `channels` is created under that category. **Locked** items (`"locked": true`) get an `@everyone` overwrite applied *on creation* — read-only for text/forum (no Send Messages), no-join for voice/stage (no Connect/Speak). **Private** items (`"private": true`) are hidden (no View Channel). A channel in a locked/private category with no lock of its own inherits (syncs to) the category.
+- **Replace everything** (a toggle, off by default) deletes all existing channels and categories first, then builds the file fresh — it asks for confirmation since it can't be undone. Left off, it just adds the file's channels alongside what's already there.
+- Types: `text` (default), `voice`, `stage`, `forum`. `announcement`/`news` fall back to text unless the server is a Community server. Caps: 50 categories, 300 channels per import; anything that fails (e.g. Discord won't delete a Community server's rules channel) is reported and the rest still goes through. Needs **Manage Channels**.
+- Minimal shape:
+  ```json
+  {
+    "categories": [
+      { "name": "Information", "locked": true, "channels": [
+        { "name": "rules", "type": "text", "locked": true },
+        { "name": "General", "type": "voice" }
+      ] }
+    ],
+    "uncategorized": [ { "name": "welcome", "type": "text" } ]
+  }
+  ```
+- **Roles are a separate file** (a `.roles` importer), by design, so a layout can be shared without dragging a server's roles along with it — that's the next piece.
 
 **Layout commands** — the same editing from Discord chat:
 - `!layout` posts an interactive editor: pick a category and a channel from the dropdowns, then use ⏫ 🔼 🔽 ⏬ to move it, the "Move into…" dropdown to re-categorize, Category ▲/▼ to reorder categories, plus Rename (pops up a form), Sync perms, and Delete (press twice to confirm). Every press applies immediately with one bulk update. Only whoever ran it can press its buttons.

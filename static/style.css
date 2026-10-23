@@ -1218,6 +1218,18 @@ input[type="file"].field-input::file-selector-button {
 .layout-options label { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
 .layout-options .field-input { width: auto; flex: 1; min-width: 140px; padding: 8px 11px; font-size: 12.5px; }
 
+.layout-import { margin-top: 16px; }
+.layout-import .field-row { gap: 8px; align-items: center; }
+.layout-import-replace {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  margin: 12px 0;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
 .kbd {
   font-family: 'JetBrains Mono', monospace;
   font-size: 10px;

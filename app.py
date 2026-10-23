@@ -730,6 +730,24 @@ def layout_apply():
     return jsonify(result), (200 if result.get("ok") else 400)
 
 
+@app.route("/api/layout/import", methods=["POST"])
+def layout_import():
+    data = request.get_json(force=True, silent=True) or {}
+    guild_id = data.get("guild_id", "")
+    text = data.get("text", "")
+    replace_all = bool(data.get("replace_all"))
+
+    if bot_manager.status != "online":
+        return jsonify({"ok": False, "error": "Bot isn't connected yet."}), 400
+    if not guild_id:
+        return jsonify({"ok": False, "error": "Pick a server first."}), 400
+    if not isinstance(text, str) or not text.strip():
+        return jsonify({"ok": False, "error": "No .layout file contents received."}), 400
+
+    result = bot_manager.import_layout(guild_id, text, replace_all)
+    return jsonify(result), (200 if result.get("ok") else 400)
+
+
 @app.route("/api/channels/clone", methods=["POST"])
 def channels_clone():
     data = request.get_json(force=True, silent=True) or {}
