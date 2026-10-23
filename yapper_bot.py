@@ -192,16 +192,6 @@ class _Poll:
 _polls = {}  # id -> _Poll
 
 
-# ---------------- obfuscator (text result; Yapper's bot API has no file upload) ----------------
-
-def _try_import_obf():
-    try:
-        import bot_obf
-        return bot_obf
-    except Exception:
-        return None
-
-
 # ---------------- bot wiring ----------------
 
 def build(token):
@@ -332,38 +322,6 @@ def build(token):
         except yapper.YapperError:
             pass
         i.ephemeral(f"Your vote: {poll_obj.options[idx]} - only you can see this. Tap another to change it.")
-
-    @bot.command("obf", "Obfuscate a small Lua snippet (inline).")
-    def obf(msg):
-        bot_obf = _try_import_obf()
-        if bot_obf is None:
-            msg.reply("Obfuscator isn't available.")
-            return
-        code = msg.args
-        if code.startswith("```"):
-            code = code[3:]
-            if "\n" in code:
-                first, body = code.split("\n", 1)
-                if first.strip().lower() in ("lua", "luau", "roblox", ""):
-                    code = body
-            if code.rstrip().endswith("```"):
-                code = code.rstrip()[:-3]
-        code = code.strip()
-        if not code:
-            msg.reply("paste a lua snippet after !obf")
-            return
-        try:
-            out = bot_obf.obfuscate(code, layers=1)
-        except ValueError as exc:
-            msg.reply(f"Can't obfuscate: {exc}")
-            return
-        # Yapper's bot API can't upload files, so the result is returned
-        # inline. Messages cap at 2000 chars; bigger scripts are Discord-only
-        # (the Discord build has the full file + layers configurator).
-        if len(out) > 1900:
-            msg.reply("too big to send inline on yapper - use the discord build for file output")
-            return
-        msg.reply(f"```lua\n{out}\n```")
 
     @bot.command("purge", "Bulk-delete recent messages: !purge <count> (needs Manage messages).")
     def purge(msg):

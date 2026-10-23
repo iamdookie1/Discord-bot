@@ -904,6 +904,51 @@ async def _cmd_obf(ctx: Ctx):
     view.message = await ctx.channel.send(view=view)
 
 
+# Tracks a running !spam per channel so !sspam can stop it. A channel can
+# only have one spam going at a time.
+_spam_tasks: dict[int, asyncio.Task] = {}
+_SPAM_MAX = 50
+_SPAM_DELAY = 0.8  # seconds between sends — keeps well under Discord's rate limit
+
+
+async def _cmd_spam(ctx: Ctx):
+    if not ctx.args or not ctx.args[0].isdigit():
+        await ctx.send("Usage: `!spam <count> [message]` — stop it with `!sspam`.")
+        return
+    count = max(1, min(int(ctx.args[0]), _SPAM_MAX))
+    # Everything after the count is the message; default to "spam" if none.
+    parts = ctx.content.split(None, 1)
+    text = (parts[1].strip() if len(parts) > 1 else "") or "spam"
+    channel = ctx.channel
+    ch_id = channel.id
+
+    existing = _spam_tasks.get(ch_id)
+    if existing and not existing.done():
+        await ctx.send("Already spamming here — stop it with `!sspam` first.")
+        return
+
+    async def _run():
+        try:
+            for _ in range(count):
+                await channel.send(text)
+                await asyncio.sleep(_SPAM_DELAY)
+        except (discord.HTTPException, asyncio.CancelledError):
+            pass
+        finally:
+            _spam_tasks.pop(ch_id, None)
+
+    _spam_tasks[ch_id] = asyncio.create_task(_run())
+
+
+async def _cmd_sspam(ctx: Ctx):
+    task = _spam_tasks.pop(ctx.channel.id, None)
+    if task and not task.done():
+        task.cancel()
+        await ctx.send("Stopped.")
+    else:
+        await ctx.send("Nothing spamming here.")
+
+
 async def _cmd_channelinfo(ctx: Ctx):
     ch = ctx.channel
     embed = _embed(title=f"#{getattr(ch, 'name', 'this channel')}")
@@ -1069,6 +1114,8 @@ UTILITY_COMMANDS = {
     "invite": CommandSpec("Gives you a link to invite this bot to another server.", _cmd_invite, None, "utility"),
     "poll": CommandSpec("Posts a timed, button-based poll with live results.", _cmd_poll, None, "utility"),
     "obf": CommandSpec("Obfuscates a Lua/Roblox script; sends it back as a file only you can see.", _cmd_obf, None, "utility"),
+    "spam": CommandSpec("Spams a message in this channel N times (stop with !sspam).", _cmd_spam, None, "utility"),
+    "sspam": CommandSpec("Stops a running !spam in this channel.", _cmd_sspam, None, "utility"),
     "channelinfo": CommandSpec("Shows info about the current channel.", _cmd_channelinfo, None, "utility"),
     "roleinfo": CommandSpec("Shows info about a role.", _cmd_roleinfo, None, "utility"),
     "permissions": CommandSpec("Shows your (or @mention's) key permissions.", _cmd_permissions, None, "utility"),
