@@ -43,6 +43,7 @@ import bot_emoji
 import bot_layout
 import bot_music
 import bot_obf
+import bot_obf_vm
 import bot_rp
 import bot_sounds
 import bot_stickers
@@ -732,11 +733,19 @@ class _ObfConfigView(discord.ui.View):
         self.source = source
         self.stem = stem
         # Defaults, all adjustable below.
+        self.mode = "auto"      # auto | vm | encoder
         self.layers = 2
         self.names = True
         self.junk = False
         self.minify = False
+        # Can the VM handle this script? (parsed once, used to steer Auto.)
+        self.vm_ok = bot_obf_vm.can_compile(source)
         self._rebuild()
+
+    def _effective_mode(self) -> str:
+        if self.mode == "auto":
+            return "vm" if self.vm_ok else "encoder"
+        return self.mode
 
     # Ephemeral messages can only be interacted with by their recipient, so
     # this is belt-and-suspenders — but it keeps a stray routed event safe.
@@ -747,8 +756,23 @@ class _ObfConfigView(discord.ui.View):
         """Re-draw every control so labels/defaults reflect current state."""
         self.clear_items()
 
+        vm_tag = "VM supported" if self.vm_ok else "VM can't run this script"
+        mode_select = discord.ui.Select(
+            placeholder=f"Mode: {self.mode}", min_values=1, max_values=1, row=0,
+            options=[
+                discord.SelectOption(label="Auto", value="auto", default=(self.mode == "auto"),
+                                     description=f"VM when it fits, else encoder ({vm_tag})"),
+                discord.SelectOption(label="VM (strongest)", value="vm", default=(self.mode == "vm"),
+                                     description="custom bytecode, no loadstring — subset only"),
+                discord.SelectOption(label="Encoder", value="encoder", default=(self.mode == "encoder"),
+                                     description="works on any script; layers below apply"),
+            ],
+        )
+        mode_select.callback = self._on_mode
+        self.add_item(mode_select)
+
         layer_select = discord.ui.Select(
-            placeholder=f"Layers: {self.layers}", min_values=1, max_values=1, row=0,
+            placeholder=f"Layers: {self.layers} (encoder only)", min_values=1, max_values=1, row=1,
             options=[
                 discord.SelectOption(
                     label=f"{n} layer{'s' if n > 1 else ''}",
@@ -765,16 +789,16 @@ class _ObfConfigView(discord.ui.View):
         self.add_item(self._toggle("junk", "Junk code", self.junk))
         self.add_item(self._toggle("minify", "Strip comments", self.minify))
 
-        go = discord.ui.Button(label="Obfuscate", emoji="🔒", style=discord.ButtonStyle.success, row=2)
+        go = discord.ui.Button(label="Obfuscate", emoji="🔒", style=discord.ButtonStyle.success, row=3)
         go.callback = self._on_go
         self.add_item(go)
-        cancel = discord.ui.Button(label="Cancel", style=discord.ButtonStyle.secondary, row=2)
+        cancel = discord.ui.Button(label="Cancel", style=discord.ButtonStyle.secondary, row=3)
         cancel.callback = self._on_cancel
         self.add_item(cancel)
 
     def _toggle(self, attr: str, label: str, state: bool) -> discord.ui.Button:
         button = discord.ui.Button(
-            label=f"{label}: {'On' if state else 'Off'}", row=1,
+            label=f"{label}: {'On' if state else 'Off'}", row=2,
             style=discord.ButtonStyle.primary if state else discord.ButtonStyle.secondary,
         )
 
@@ -788,17 +812,31 @@ class _ObfConfigView(discord.ui.View):
 
     def embed(self) -> discord.Embed:
         size = len(self.source.encode("utf-8"))
+        eff = self._effective_mode()
+        if eff == "vm":
+            how = ("**VM** — compiled to custom bytecode, no `loadstring` to hook. "
+                   "Strongest. (Layers/junk/strip don't apply to VM.)")
+        else:
+            how = "**Encoder** — encrypted + loader. Works on any script; layers below apply."
         embed = _embed(
             title="🔧 Obfuscator",
             description=("Set these however you like, then tap **Obfuscate**.\n"
-                         "This panel — and the file you get back — are visible only to you."),
+                         "This panel — and the file you get back — are visible only to you.\n\n"
+                         f"This run will use: {how}"),
         )
-        embed.add_field(name="Layers", value=str(self.layers), inline=True)
+        embed.add_field(name="Mode", value=self.mode, inline=True)
+        embed.add_field(name="VM fits this script", value="yes" if self.vm_ok else "no", inline=True)
         embed.add_field(name="Scramble names", value="On" if self.names else "Off", inline=True)
-        embed.add_field(name="Junk code", value="On" if self.junk else "Off", inline=True)
-        embed.add_field(name="Strip comments", value="On" if self.minify else "Off", inline=True)
+        embed.add_field(name="Layers (encoder)", value=str(self.layers), inline=True)
+        embed.add_field(name="Junk code (encoder)", value="On" if self.junk else "Off", inline=True)
+        embed.add_field(name="Strip comments (encoder)", value="On" if self.minify else "Off", inline=True)
         embed.add_field(name="Script", value=f"`{self.stem}` · {size:,} bytes", inline=True)
         return embed
+
+    async def _on_mode(self, interaction: discord.Interaction):
+        self.mode = interaction.data["values"][0]
+        self._rebuild()
+        await interaction.response.edit_message(embed=self.embed(), view=self)
 
     async def _on_layers(self, interaction: discord.Interaction):
         self.layers = int(interaction.data["values"][0])
@@ -806,24 +844,38 @@ class _ObfConfigView(discord.ui.View):
         await interaction.response.edit_message(embed=self.embed(), view=self)
 
     async def _on_go(self, interaction: discord.Interaction):
-        # Ack immediately (3s limit), then do the CPU work off the event loop
-        # so a big script with many layers can't stall the bot.
+        # Ack immediately (3s limit), then do the CPU work off the event loop.
         await interaction.response.defer()
-        try:
-            out = await asyncio.get_running_loop().run_in_executor(
-                None,
-                lambda: bot_obf.obfuscate(
-                    self.source, layers=self.layers, names=self.names,
-                    junk=self.junk, minify=self.minify,
-                ),
+        eff = self._effective_mode()
+
+        if eff == "vm" and not self.vm_ok:
+            await interaction.followup.send(
+                "VM mode can't run this script (it uses something the VM subset doesn't do, "
+                "like varargs `...`, `repeat`, `goto`, bitwise ops or long strings). "
+                "Switch Mode to **Encoder** or **Auto**.",
+                ephemeral=True,
             )
-        except ValueError as exc:
+            return
+
+        def _build():
+            if eff == "vm":
+                return bot_obf_vm.compile_to_vm(self.source, names=self.names), "VM / custom bytecode"
+            out = bot_obf.obfuscate(
+                self.source, layers=self.layers, names=self.names,
+                junk=self.junk, minify=self.minify,
+            )
+            return out, f"encoder / {self.layers} layer(s)"
+
+        try:
+            out, how = await asyncio.get_running_loop().run_in_executor(None, _build)
+        except (ValueError, bot_obf_vm.Unsupported) as exc:
             await interaction.followup.send(f"Can't obfuscate: {exc}", ephemeral=True)
             return
+
         data = out.encode("utf-8")
         file = discord.File(io.BytesIO(data), filename=f"{_safe_stem(self.stem)}.obf.lua")
         await interaction.followup.send(
-            f"🔒 Done — {self.layers} layer(s), {len(data):,} bytes. Only you can see this. "
+            f"🔒 Done — {how}, {len(data):,} bytes. Only you can see this. "
             "Change any setting above and tap **Obfuscate** again for another version.",
             file=file, ephemeral=True,
         )
