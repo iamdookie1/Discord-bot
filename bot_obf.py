@@ -17,11 +17,16 @@ at the blob):
 * The keystream never repeats across the payload, and each byte is chained
   to the previous *ciphertext* byte (CBC-style), so identical source bytes
   don't produce identical output and you can't line up repeats.
-* The payload string is split into several randomly-sized, randomly-named
-  fragments that are concatenated back, and the loader's own identifiers are
-  scrambled into look-alike noise. Optional junk interleaves dead code.
-* Layers stack with fresh constants each time: layer 2 encodes the *text of*
-  the layer-1 loader, so peeling one only reveals another encoded loader.
+* The ciphertext is packed as base64 over a SHUFFLED alphabet — a different
+  symbol->value mapping each layer, so a generic decoder can't assume the
+  standard table. base64 (~1.33 chars/byte) also keeps nested layers from
+  exploding in size the way `\\ddd` escapes (4 chars/byte) did.
+* The payload string is split into several randomly-named fragments that are
+  concatenated back, and the loader's own identifiers are scrambled into
+  look-alike noise. Optional junk interleaves dead code.
+* Layers stack with fresh constants and a fresh alphabet each time: layer 2
+  encodes the *text of* the layer-1 loader, so peeling one only reveals
+  another encoded loader with different parameters.
 
 Two deliberate compatibility choices keep one output valid everywhere:
 
@@ -195,20 +200,41 @@ def _encode_bytes(data: bytes, a: int, c: int, seed: int, iv: int) -> bytes:
     return bytes(out)
 
 
-def _fragment(esc: str, n_esc: int, rng: random.Random, used: set):
-    """Split the escaped payload into 2-5 pieces on escape boundaries (each
-    escape is exactly 4 chars, so we never cut one in half), each a separate
-    randomly-named local. Returns (declarations, concat_expression)."""
-    if n_esc < 8:
+# A base64 payload is ~1.33 chars/byte (vs. 4 for \ddd escapes), which is
+# what keeps nested layers from exploding in size. The alphabet is SHUFFLED
+# per layer, so the char->value mapping is a different secret each time — a
+# generic "undo" script can't assume the standard table.
+_B64_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+
+
+def _b64_encode(data: bytes, alphabet: str) -> str:
+    """Standard base64 packing (3 bytes -> 4 symbols) over a custom alphabet.
+    `data` must already be padded to a multiple of 3."""
+    out = []
+    for i in range(0, len(data), 3):
+        n = (data[i] << 16) | (data[i + 1] << 8) | data[i + 2]
+        out.append(alphabet[(n >> 18) & 63])
+        out.append(alphabet[(n >> 12) & 63])
+        out.append(alphabet[(n >> 6) & 63])
+        out.append(alphabet[n & 63])
+    return "".join(out)
+
+
+def _fragment(text: str, rng: random.Random, used: set):
+    """Split the payload text into 2-5 randomly-named pieces, concatenated
+    back. base64 has no quotes/backslashes/newlines, so any cut point is
+    safe. Returns (declarations, concat_expression)."""
+    n = len(text)
+    if n < 24:
         name = _rand_name(rng, used)
-        return [f'local {name}="{esc}"'], name
+        return [f'local {name}="{text}"'], name
     parts = rng.randint(2, 5)
-    cuts = sorted(rng.sample(range(1, n_esc), parts - 1))
-    bounds = [0] + cuts + [n_esc]
+    cuts = sorted(rng.sample(range(1, n), parts - 1))
+    bounds = [0] + cuts + [n]
     decls, names = [], []
     for lo, hi in zip(bounds, bounds[1:]):
         name = _rand_name(rng, used)
-        decls.append(f'local {name}="{esc[lo * 4:hi * 4]}"')
+        decls.append(f'local {name}="{text[lo:hi]}"')
         names.append(name)
     return decls, "..".join(names)
 
@@ -216,32 +242,56 @@ def _fragment(esc: str, n_esc: int, rng: random.Random, used: set):
 def _encode_layer(data: bytes, rng: random.Random, *, names: bool, junk: bool) -> str:
     a, c, seed, iv = _lcg_params(rng)
     enc = _encode_bytes(data, a, c, seed, iv)
-    esc = "".join("\\%03d" % b for b in enc)
+    length = len(enc)
+    enc_padded = enc + bytes((-length) % 3)  # pad to a multiple of 3 for base64
 
+    alphabet = list(_B64_CHARS)
+    rng.shuffle(alphabet)
+    alphabet = "".join(alphabet)
+    payload = _b64_encode(enc_padded, alphabet)
+
+    keys = ("al", "d", "b", "bi", "i", "n", "s", "p", "k", "c", "o", "src", "f", "run")
     used: set = set()
     if names:
-        nm = {x: _rand_name(rng, used) for x in ("e", "s", "p", "o", "i", "k", "b", "src", "f", "run")}
+        nm = {x: _rand_name(rng, used) for x in keys}
     else:
-        nm = {x: x for x in ("e", "s", "p", "o", "i", "k", "b", "src", "f", "run")}
+        nm = {x: x for x in keys}
         used.update(nm.values())
 
-    frag_decls, concat = _fragment(esc, len(enc), rng, used)
+    frag_decls, concat = _fragment(payload, rng, used)
+
+    # string.find(..., 1, true) is a PLAIN find (the alphabet contains '+',
+    # which is a pattern magic char). It returns the 1-based position; -1
+    # gives the 0-63 sextet value. Four symbols rebuild a 24-bit number, then
+    # three bytes come back out of it — pure arithmetic, no bitwise ops.
+    find = lambda off: (f"(string.find({nm['al']},string.sub({nm['d']},{nm['i']}+{off},{nm['i']}+{off}),1,true)-1)"
+                        if off else
+                        f"(string.find({nm['al']},string.sub({nm['d']},{nm['i']},{nm['i']}),1,true)-1)")
 
     stmts = list(frag_decls)
     stmts += [
-        f"local {nm['e']}={concat}",
+        f'local {nm["al"]}="{alphabet}"',
+        f"local {nm['d']}={concat}",
+        f"local {nm['b']}={{}}",
+        f"local {nm['bi']}=0",
+        # base64 decode: every 4 symbols -> 3 ciphertext bytes.
+        (f"for {nm['i']}=1,#{nm['d']},4 do "
+         f"local {nm['n']}={find(0)}*262144+{find(1)}*4096+{find(2)}*64+{find(3)} "
+         f"{nm['b']}[{nm['bi']}+1]=math.floor({nm['n']}/65536)%256 "
+         f"{nm['b']}[{nm['bi']}+2]=math.floor({nm['n']}/256)%256 "
+         f"{nm['b']}[{nm['bi']}+3]={nm['n']}%256 "
+         f"{nm['bi']}={nm['bi']}+3 end"),
         f"local {nm['s']}={seed}",
         f"local {nm['p']}={iv}",
         f"local {nm['o']}={{}}",
-        # decode loop: advance the LCG, pull a keystream byte from its high
-        # bits, undo the chain, feed the ciphertext byte forward as the next
-        # chain value.
-        (f"for {nm['i']}=1,#{nm['e']} do "
+        # decrypt the real `length` bytes: advance the LCG, take a keystream
+        # byte from its high bits, undo the chain, carry the ciphertext byte.
+        (f"for {nm['i']}=1,{length} do "
          f"{nm['s']}=({nm['s']}*{a}+{c})%{_LCG_M} "
          f"local {nm['k']}=math.floor({nm['s']}/65536)%256 "
-         f"local {nm['b']}=string.byte({nm['e']},{nm['i']}) "
-         f"{nm['o']}[{nm['i']}]=string.char(({nm['b']}-{nm['k']}-{nm['p']})%256) "
-         f"{nm['p']}={nm['b']} end"),
+         f"local {nm['c']}={nm['b']}[{nm['i']}] "
+         f"{nm['o']}[{nm['i']}]=string.char(({nm['c']}-{nm['k']}-{nm['p']})%256) "
+         f"{nm['p']}={nm['c']} end"),
         f"local {nm['src']}=table.concat({nm['o']})",
         f"local {nm['f']}=loadstring or load",
         f"local {nm['run']}={nm['f']}({nm['src']})",
@@ -284,9 +334,10 @@ def obfuscate(source: str, *, layers: int = 2, names: bool = True,
             f"script is {len(data):,} bytes; the limit is {MAX_SOURCE_BYTES:,}."
         )
 
-    # Each layer ~quadruples size; refuse up front if it clearly won't fit
-    # rather than building a huge string first.
-    est = len(data) * (4 ** layers)
+    # base64 makes each layer only ~1.33x the data plus a small fixed loader,
+    # so growth is modest; this loose pre-check just avoids building something
+    # absurd, and the exact check after the fact catches the rest.
+    est = len(data) * (2 ** layers) + 4000 * layers
     if est > MAX_OUTPUT_BYTES:
         raise ValueError(
             f"{layers} layers on a {len(data):,}-byte script would exceed the "
